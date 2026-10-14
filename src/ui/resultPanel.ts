@@ -1,7 +1,7 @@
 import { buildGpx } from '../gpx/export';
 import type { TargetProfile } from '../gpx/profile';
 import type { CourseResult } from '../shared/messages';
-import { renderProfileChart } from './profileChart';
+import { renderInteractiveChart } from './profileChart';
 
 const SURFACE_NAMES = ['paved', 'gravel', 'trail', 'unknown'];
 
@@ -10,6 +10,7 @@ export function renderResult(
   course: CourseResult,
   target: TargetProfile,
   onTryAnother: () => void,
+  onPoint: (sampleIndex: number | null) => void,
 ): void {
   container.hidden = false;
   container.textContent = '';
@@ -20,10 +21,7 @@ export function renderResult(
 
   const chart = document.createElement('div');
   container.appendChild(chart);
-  renderProfileChart(chart, [
-    { samples: target.samples, color: '#9ca3af' },
-    { samples: course.samples, color: '#dc2626' },
-  ]);
+  renderInteractiveChart(chart, target.samples, course.samples, onPoint);
 
   const stats = document.createElement('p');
   stats.className = 'hint';

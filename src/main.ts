@@ -103,6 +103,7 @@ function startSearch(): void {
       totalGain: profile.totalGain,
       totalLoss: profile.totalLoss,
       gradientHistogram: profile.gradientHistogram,
+      turnsPerKm: profile.turnsPerKm,
     },
     targetLengthMeters: targetLength,
     seed,
@@ -174,12 +175,23 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     case 'result': {
       map.drawCourse(msg.course.segments);
+      map.decorateCourse(msg.course.exportPoints);
       const profile = activeProfile();
       if (profile) {
-        renderResult(results, msg.course, profile, () => {
-          seed += 1;
-          startSearch();
-        });
+        const points = msg.course.exportPoints;
+        renderResult(
+          results,
+          msg.course,
+          profile,
+          () => {
+            seed += 1;
+            startSearch();
+          },
+          (i) => {
+            if (i === null) map.hideCoursePoint();
+            else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
+          },
+        );
       }
       searchDone();
       break;

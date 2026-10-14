@@ -23,6 +23,9 @@ function makeGraph(): Graph {
     lats: new Float64Array([0, 0]),
     lons: new Float64Array([0, 0]),
     elev: new Float32Array([0, 0]),
+    turnOffsets: new Float64Array(0),
+    headOutA: Number.NaN,
+    headInB: Number.NaN,
   });
   const edges = [mk(0, 1, 100), mk(1, 3, 100), mk(0, 2, 150), mk(2, 3, 150), mk(3, 4, 50)];
   const n = 5;

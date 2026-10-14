@@ -1,8 +1,11 @@
 import type { TargetProfile } from '../gpx/profile';
 import { dijkstra } from '../graph/dijkstra';
 import { otherNode, type Graph } from '../graph/types';
+import { TURN_ANGLE_DEG, angleDiffDeg } from '../shared/geo';
 import {
   assembleCourse,
+  entryHeading,
+  exitHeading,
   scoreCourse,
   DEFAULT_WEIGHTS,
   MIX_ROAD,
@@ -38,6 +41,8 @@ interface StateStore {
   loss: number[];
   penaltyLen: number[];
   repeatLen: number[];
+  turns: number[];
+  exitHead: number[];
   parent: number[];
   edge: number[];
   dir: number[];
@@ -48,9 +53,11 @@ interface TargetPrefix {
   cumGain: Float32Array;
   cumLoss: Float32Array;
   denom: number;
+  turnsPerKm: number;
 }
 
-function targetPrefix(samples: Float32Array, totalGain: number, totalLoss: number): TargetPrefix {
+function targetPrefix(target: TargetProfile): TargetPrefix {
+  const samples = target.samples;
   const cumGain = new Float32Array(samples.length);
   const cumLoss = new Float32Array(samples.length);
   for (let i = 1; i < samples.length; i++) {
@@ -58,7 +65,12 @@ function targetPrefix(samples: Float32Array, totalGain: number, totalLoss: numbe
     cumGain[i] = cumGain[i - 1]! + (d > 0 ? d : 0);
     cumLoss[i] = cumLoss[i - 1]! + (d < 0 ? -d : 0);
   }
-  return { cumGain, cumLoss, denom: Math.max(1, totalGain + totalLoss) };
+  return {
+    cumGain,
+    cumLoss,
+    denom: Math.max(1, target.totalGain + target.totalLoss),
+    turnsPerKm: target.turnsPerKm,
+  };
 }
 
 function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefix): number {
@@ -68,11 +80,14 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
   if (ti >= tp.cumGain.length) ti = tp.cumGain.length - 1;
   const gainLossErr =
     (Math.abs(s.gain[i]! - tp.cumGain[ti]!) + Math.abs(s.loss[i]! - tp.cumLoss[ti]!)) / tp.denom;
+  // Turn density is noisy on short prefixes; let it bite only after 500 m.
+  const turnErr = d > 500 ? Math.abs(s.turns[i]! / (d / 1000) - tp.turnsPerKm) : 0;
   return (
     weights.rmse * rmse +
     weights.gainLoss * gainLossErr +
     weights.penalty * (s.penaltyLen[i]! / d) +
-    weights.repeat * (s.repeatLen[i]! / d)
+    weights.repeat * (s.repeatLen[i]! / d) +
+    weights.turns * turnErr
   );
 }
 
@@ -141,11 +156,13 @@ export async function beamSearch(
     loss: [0],
     penaltyLen: [0],
     repeatLen: [0],
+    turns: [0],
+    exitHead: [Number.NaN],
     parent: [-1],
     edge: [-1],
     dir: [0],
   };
-  const tp = targetPrefix(target.samples, target.totalGain, target.totalLoss);
+  const tp = targetPrefix(target);
 
   const buckets: number[][] = Array.from({ length: totalBuckets }, () => []);
   buckets[0]!.push(0);
@@ -231,6 +248,18 @@ export async function beamSearch(
 
         const reuse = recentReuse(s, si, ei, forward ? 1 : 0);
         const repeat = reuse === 0 ? 0 : reuse === 1 ? e.lengthM : 2 * e.lengthM;
+
+        const entry = entryHeading(e, forward);
+        const prevExit = s.exitHead[si]!;
+        let turns = s.turns[si]! + e.turnOffsets.length;
+        if (
+          Number.isFinite(prevExit) &&
+          Number.isFinite(entry) &&
+          Math.abs(angleDiffDeg(prevExit, entry)) > TURN_ANGLE_DEG
+        ) {
+          turns++;
+        }
+
         const idx = s.node.length;
         s.node.push(nextNode);
         s.dist.push(newDist);
@@ -240,6 +269,8 @@ export async function beamSearch(
         s.loss.push(loss);
         s.penaltyLen.push(s.penaltyLen[si]! + e.penalty * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
+        s.turns.push(turns);
+        s.exitHead.push(exitHeading(e, forward));
         s.parent.push(si);
         s.edge.push(ei);
         s.dir.push(forward ? 1 : 0);

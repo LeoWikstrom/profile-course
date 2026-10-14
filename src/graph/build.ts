@@ -1,4 +1,4 @@
-import { haversineMeters } from '../shared/geo';
+import { bearingDeg, haversineMeters, turnPositions } from '../shared/geo';
 import { SAMPLE_STEP_M, movingMedian5 } from '../gpx/profile';
 import type { OverpassResponse, OverpassWay } from '../net/overpass';
 import type { TerrainSampler } from '../net/terrain';
@@ -141,7 +141,20 @@ export function buildGraph(response: OverpassResponse): Graph {
         }
       }
       if (lengthM < 1) continue;
-      edges.push({ a, b, lengthM, surface, penalty, lats, lons, elev: null });
+      const last = lats.length - 1;
+      edges.push({
+        a,
+        b,
+        lengthM,
+        surface,
+        penalty,
+        lats,
+        lons,
+        elev: null,
+        turnOffsets: Float64Array.from(turnPositions(lats, lons)),
+        headOutA: bearingDeg(lats[0]!, lons[0]!, lats[1]!, lons[1]!),
+        headInB: bearingDeg(lats[last - 1]!, lons[last - 1]!, lats[last]!, lons[last]!),
+      });
     }
   }
 

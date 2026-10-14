@@ -4,7 +4,8 @@ import {
   gradientHistogram,
   type TargetProfile,
 } from '../gpx/profile';
-import type { Graph } from '../graph/types';
+import { TURN_ANGLE_DEG, angleDiffDeg } from '../shared/geo';
+import type { Graph, GraphEdge } from '../graph/types';
 
 export interface Weights {
   rmse: number;
@@ -13,6 +14,10 @@ export interface Weights {
   surface: number;
   penalty: number;
   repeat: number;
+  /** Per |turns/km| difference from the target. */
+  turns: number;
+  /** Per dense turn (within 100 m of the previous turn) per km. */
+  denseTurns: number;
 }
 
 export const DEFAULT_WEIGHTS: Weights = {
@@ -22,7 +27,19 @@ export const DEFAULT_WEIGHTS: Weights = {
   surface: 15,
   penalty: 30,
   repeat: 10,
+  turns: 2,
+  denseTurns: 2,
 };
+
+const DENSE_TURN_GAP_M = 100;
+
+export function entryHeading(e: GraphEdge, forward: boolean): number {
+  return forward ? e.headOutA : (e.headInB + 180) % 360;
+}
+
+export function exitHeading(e: GraphEdge, forward: boolean): number {
+  return forward ? e.headInB : (e.headOutA + 180) % 360;
+}
 
 /**
  * Desired fraction of distance per surface class [paved, gravel, trail, unknown];
@@ -55,6 +72,8 @@ export interface AssembledCourse {
   surfaceSplit: SurfaceMix;
   penaltyFraction: number;
   repeatFraction: number;
+  turnsPerKm: number;
+  denseTurnsPerKm: number;
 }
 
 export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse {
@@ -73,6 +92,10 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   /** Edge index -> direction of first traversal (0/1). */
   const used = new Map<number, number>();
 
+  const turnDists: number[] = [];
+  let prevExitHead = Number.NaN;
+  let distSoFar = 0;
+
   let w = 0;
   let first = true;
   for (let i = 0; i < path.edges.length; i++) {
@@ -86,6 +109,21 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
       samples[w++] = elev[forward ? k : n - 1 - k]!;
     }
     first = false;
+
+    const entry = entryHeading(e, forward);
+    if (
+      Number.isFinite(prevExitHead) &&
+      Number.isFinite(entry) &&
+      Math.abs(angleDiffDeg(prevExitHead, entry)) > TURN_ANGLE_DEG
+    ) {
+      turnDists.push(distSoFar);
+    }
+    const t = e.turnOffsets;
+    for (let k = 0; k < t.length; k++) {
+      turnDists.push(distSoFar + (forward ? t[k]! : e.lengthM - t[t.length - 1 - k]!));
+    }
+    prevExitHead = exitHeading(e, forward);
+    distSoFar += e.lengthM;
 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
@@ -105,6 +143,11 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
 
   const { gain, loss } = gainLoss(samples);
   const split = surfaceLen.map((v) => (lengthM > 0 ? v / lengthM : 0)) as SurfaceMix;
+  let denseTurns = 0;
+  for (let i = 1; i < turnDists.length; i++) {
+    if (turnDists[i]! - turnDists[i - 1]! < DENSE_TURN_GAP_M) denseTurns++;
+  }
+  const km = Math.max(0.001, lengthM / 1000);
   return {
     samples,
     lengthM,
@@ -113,6 +156,8 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     surfaceSplit: split,
     penaltyFraction: lengthM > 0 ? penaltyLen / lengthM : 0,
     repeatFraction: lengthM > 0 ? repeatLen / lengthM : 0,
+    turnsPerKm: turnDists.length / km,
+    denseTurnsPerKm: denseTurns / km,
   };
 }
 
@@ -194,7 +239,9 @@ export function scoreCourse(
     weights.histogram * histErr +
     weights.surface * (desiredMix ? surfaceMismatch(course.surfaceSplit, desiredMix) : 0) +
     weights.penalty * course.penaltyFraction +
-    weights.repeat * course.repeatFraction
+    weights.repeat * course.repeatFraction +
+    weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm) +
+    weights.denseTurns * course.denseTurnsPerKm
   );
 }
 

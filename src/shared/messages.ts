@@ -10,6 +10,7 @@ export interface TargetTransfer {
   totalGain: number;
   totalLoss: number;
   gradientHistogram: Float32Array;
+  turnsPerKm: number;
 }
 
 export interface CourseSegment {

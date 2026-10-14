@@ -63,3 +63,128 @@ export function renderProfileChart(
 
   container.appendChild(svg);
 }
+
+/**
+ * Overlaid target/course chart where touching or dragging shows a crosshair
+ * with distance, elevation and grade, and reports the sample index so the
+ * matching point can be highlighted on the map.
+ */
+export function renderInteractiveChart(
+  container: HTMLElement,
+  target: Float32Array,
+  course: Float32Array,
+  onPoint: (sampleIndex: number | null) => void,
+  width = 360,
+  height = 140,
+): void {
+  container.textContent = '';
+
+  let min = Infinity;
+  let max = -Infinity;
+  for (const s of [target, course]) {
+    for (const v of s) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (max - min < 10) max = min + 10;
+  const maxDist = (Math.max(target.length, course.length) - 1) * SAMPLE_STEP_M;
+
+  const pad = 4;
+  const padTop = 30; // room for the crosshair label
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Elevation profiles of race and course');
+  svg.style.touchAction = 'none';
+
+  const x = (i: number) => pad + ((i * SAMPLE_STEP_M) / maxDist) * (width - 2 * pad);
+  const y = (v: number) => height - pad - ((v - min) / (max - min)) * (height - pad - padTop);
+
+  for (const { samples, color } of [
+    { samples: target, color: '#9ca3af' },
+    { samples: course, color: '#dc2626' },
+  ]) {
+    const pts: string[] = [];
+    for (let i = 0; i < samples.length; i++) {
+      pts.push(`${x(i).toFixed(1)},${y(samples[i]!).toFixed(1)}`);
+    }
+    const line = document.createElementNS(SVG_NS, 'polyline');
+    line.setAttribute('points', pts.join(' '));
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', '1.5');
+    svg.appendChild(line);
+  }
+
+  const crosshair = document.createElementNS(SVG_NS, 'line');
+  crosshair.setAttribute('stroke', 'currentColor');
+  crosshair.setAttribute('stroke-dasharray', '3 3');
+  crosshair.setAttribute('visibility', 'hidden');
+  svg.appendChild(crosshair);
+
+  const dot = document.createElementNS(SVG_NS, 'circle');
+  dot.setAttribute('r', '4');
+  dot.setAttribute('fill', '#dc2626');
+  dot.setAttribute('stroke', '#fff');
+  dot.setAttribute('visibility', 'hidden');
+  svg.appendChild(dot);
+
+  const text = document.createElementNS(SVG_NS, 'text');
+  text.setAttribute('font-size', '11');
+  text.setAttribute('fill', 'currentColor');
+  text.setAttribute('y', '12');
+  text.setAttribute('visibility', 'hidden');
+  svg.appendChild(text);
+
+  function show(clientX: number): void {
+    const rect = svg.getBoundingClientRect();
+    const fx = ((clientX - rect.left) / rect.width) * width;
+    let i = Math.round((((fx - pad) / (width - 2 * pad)) * maxDist) / SAMPLE_STEP_M);
+    i = Math.max(0, Math.min(i, course.length - 1));
+    const cx = x(i);
+    const cy = y(course[i]!);
+    crosshair.setAttribute('x1', String(cx));
+    crosshair.setAttribute('x2', String(cx));
+    crosshair.setAttribute('y1', String(padTop - 10));
+    crosshair.setAttribute('y2', String(height - pad));
+    dot.setAttribute('cx', String(cx));
+    dot.setAttribute('cy', String(cy));
+
+    const i0 = Math.max(0, i - 1);
+    const i1 = Math.min(course.length - 1, i + 1);
+    const grade = ((course[i1]! - course[i0]!) / ((i1 - i0) * SAMPLE_STEP_M)) * 100;
+    text.textContent = `${((i * SAMPLE_STEP_M) / 1000).toFixed(2)} km · ${course[i]!.toFixed(0)} m · ${grade.toFixed(1)} %`;
+    const anchorEnd = cx > width / 2;
+    text.setAttribute('text-anchor', anchorEnd ? 'end' : 'start');
+    text.setAttribute('x', String(anchorEnd ? cx - 6 : cx + 6));
+
+    crosshair.setAttribute('visibility', 'visible');
+    dot.setAttribute('visibility', 'visible');
+    text.setAttribute('visibility', 'visible');
+    onPoint(i);
+  }
+
+  function hide(): void {
+    crosshair.setAttribute('visibility', 'hidden');
+    dot.setAttribute('visibility', 'hidden');
+    text.setAttribute('visibility', 'hidden');
+    onPoint(null);
+  }
+
+  svg.addEventListener('pointerdown', (e) => {
+    svg.setPointerCapture(e.pointerId);
+    show(e.clientX);
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (e.buttons > 0 || e.pointerType === 'mouse') show(e.clientX);
+  });
+  svg.addEventListener('pointerup', hide);
+  svg.addEventListener('pointercancel', hide);
+  svg.addEventListener('pointerleave', (e) => {
+    if (e.pointerType === 'mouse') hide();
+  });
+
+  container.appendChild(svg);
+}

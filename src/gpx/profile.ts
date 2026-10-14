@@ -1,4 +1,4 @@
-import { haversineMeters } from '../shared/geo';
+import { haversineMeters, turnPositions } from '../shared/geo';
 import type { GpxPoint } from './parse';
 
 export const SAMPLE_STEP_M = 25;
@@ -13,6 +13,8 @@ export interface TargetProfile {
   totalLoss: number;
   /** Fraction of distance per gradient bin; bin i covers [-21 + 2i, -19 + 2i) %. */
   gradientHistogram: Float32Array;
+  /** Significant direction changes per km along the race geometry. */
+  turnsPerKm: number;
 }
 
 export function movingMedian5(values: Float32Array): Float32Array {
@@ -79,7 +81,11 @@ export function gradientHistogram(
   return hist;
 }
 
-export function buildProfileFromSamples(samples: Float32Array, totalDistance: number): TargetProfile {
+export function buildProfileFromSamples(
+  samples: Float32Array,
+  totalDistance: number,
+  turnsPerKm = 0,
+): TargetProfile {
   const relative = new Float32Array(samples.length);
   const start = samples[0] ?? 0;
   for (let i = 0; i < samples.length; i++) relative[i] = samples[i]! - start;
@@ -90,6 +96,7 @@ export function buildProfileFromSamples(samples: Float32Array, totalDistance: nu
     totalGain: gain,
     totalLoss: loss,
     gradientHistogram: gradientHistogram(relative),
+    turnsPerKm,
   };
 }
 
@@ -98,7 +105,11 @@ export function sliceProfile(profile: TargetProfile, fromM: number, toM: number)
   const last = profile.samples.length - 1;
   const i0 = Math.max(0, Math.min(Math.round(fromM / SAMPLE_STEP_M), last - 1));
   const i1 = Math.max(i0 + 1, Math.min(Math.round(toM / SAMPLE_STEP_M), last));
-  return buildProfileFromSamples(profile.samples.slice(i0, i1 + 1), (i1 - i0) * SAMPLE_STEP_M);
+  return buildProfileFromSamples(
+    profile.samples.slice(i0, i1 + 1),
+    (i1 - i0) * SAMPLE_STEP_M,
+    profile.turnsPerKm,
+  );
 }
 
 /** Points must all carry elevation; fetch missing elevation before calling. */
@@ -118,5 +129,10 @@ export function buildTargetProfile(points: GpxPoint[]): TargetProfile {
   const totalDistance = cumDist[n - 1]!;
   const smoothed = movingMedian5(elev);
   const samples = resampleElevation(cumDist, smoothed, totalDistance);
-  return buildProfileFromSamples(samples, totalDistance);
+  const turns = turnPositions(
+    points.map((p) => p.lat),
+    points.map((p) => p.lon),
+  );
+  const turnsPerKm = totalDistance > 0 ? turns.length / (totalDistance / 1000) : 0;
+  return buildProfileFromSamples(samples, totalDistance, turnsPerKm);
 }

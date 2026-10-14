@@ -32,6 +32,8 @@ function courseFrom(samples: Float32Array): AssembledCourse {
     surfaceSplit: [1, 0, 0, 0],
     penaltyFraction: 0,
     repeatFraction: 0,
+    turnsPerKm: 0,
+    denseTurnsPerKm: 0,
   };
 }
 
