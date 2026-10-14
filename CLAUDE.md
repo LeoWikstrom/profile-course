@@ -1,0 +1,70 @@
+# Profile Course – race-profile course generator
+
+A client-only static web app: upload a race GPX, pick a start point and radius, get a runnable
+course nearby whose elevation profile matches the race. Full plan in `docs/build-plan.md` —
+read it before starting a new phase.
+
+## Architecture
+
+- **Client-only** (HTML + TypeScript + Web Worker), no backend, no API keys. Hosted as static files.
+- **UI layer** (main thread) talks to the **search worker** via typed `postMessage`
+  (`src/shared/messages.ts`); never does heavy computation.
+- **Map**: Leaflet with OSM raster tiles.
+- **Data sources** (all free, CORS, no key): Overpass API (runnable ways + surface tags),
+  Terrarium terrain tiles on AWS (elevation, decode `(R*256 + G + B/256) - 32768`),
+  Open-Meteo elevation as fallback.
+- **Cache**: IndexedDB (`idb-keyval`) for Overpass responses (rounded centre + radius) and DEM
+  tiles (z/x/y).
+
+## Data pipeline (per search, steps 2–4 cached)
+
+1. Parse GPX → `TargetProfile { totalDistance, samples (25 m, relative to start), totalGain,
+   totalLoss, gradientHistogram }`. 5-sample moving median before resampling.
+2. Overpass query for runnable highways within radius (footway, path, track, cycleway,
+   residential, living_street, unclassified, tertiary, service, pedestrian, steps, bridleway;
+   exclude `access=private|no`, `foot=no`).
+3. Build graph: nodes = shared OSM nodes + way endpoints; edges store length, geometry,
+   surfaceClass (paved/gravel/trail/unknown), penalty, elevation every 25 m. Drop components
+   not connected to the start.
+4. Sample elevation per edge from DEM tiles, bilinear, same median smoothing as GPX.
+5. Snap start to nearest graph node within 100 m.
+
+## Matching algorithm
+
+Score (lower = better) on 25 m samples:
+`S = w_e·RMSE + w_g·gain/loss error + w_h·EMD(gradient histograms) + w_s·surfaceMismatch
++ w_p·penalties + w_r·repeatFraction`, weights `1.0 / 20 / 10 / 15 / 30 / 10` (debug-tunable).
+
+- Phase 2 baseline: 2 000 seeded random walks, keep best 20, local improvement.
+- Phase 3: beam search over `(node, 100 m bucket)` states, B = 200/bucket, Dijkstra pruning on
+  reachability, k-shortest-paths window replacement (300–1 500 m, k = 5, two passes).
+- Deterministic via user-visible seed; "Try another" increments it.
+- Budget: graph build ≤ 2 s, search ≤ 8 s on a mid-range phone (R = 5 km, 21 km target).
+  If over: halve B, double bucket size.
+
+## Conventions
+
+- Heavy loops use typed arrays and plain `for` loops; no per-step allocation in the beam search.
+- Everything in `src/search/` and `src/graph/` must run in the worker (no DOM access).
+- Every network call: cache read first, timeout, retry (Overpass has a mirror fallback).
+- Finish a phase → run `npm test` and `npm run lint` → commit with the phase name → next phase.
+- Test fixtures live in `test/fixtures/` (3 real GPX races; add saved Overpass JSON + a terrain
+  tile in phase 1).
+- Dev server: `npm run dev` (binds 0.0.0.0 for phone testing in Termux).
+
+## Phase checklist
+
+- [x] **Phase 0 – Scaffold**: Vite + TS strict + Vitest + ESLint + Prettier; Leaflet map, tap
+      sets start marker, radius slider draws circle; worker wired with typed messages.
+- [ ] **Phase 1 – Data in**: GPX parser + profile builder (tests on the three fixtures),
+      Overpass client + cache, graph builder, Terrarium fetcher/decoder/sampler, edge
+      elevation, start snapping. Verify Terrarium URL pattern first.
+- [ ] **Phase 2 – First courses**: scorer (6 terms + tests), random-walk baseline, result panel
+      with overlaid profile chart, GPX export.
+- [ ] **Phase 3 – Beam search**: Dijkstra pruning, beam search, local improvement, perf tuning.
+- [ ] **Phase 4 – Surface & options**: surface presets, safety penalties from tags,
+      return-to-start, distance override, km range, seed/Try another, shareable URL.
+- [ ] **Phase 5 – Polish & ship**: error states, cancel, offline, PWA shell, GitHub Pages
+      deploy via Action.
+- [ ] **Phase 6 – Later** (optional): pre-built city graphs, Strava personal heatmap, OSM
+      traces, multiple candidates.

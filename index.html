@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Profile Course</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="sheet">
+      <div id="sheet-handle" aria-hidden="true"></div>
+      <section id="controls">
+        <h1>Profile Course</h1>
+        <label class="control">
+          <span>Race GPX</span>
+          <input type="file" id="gpx-input" accept=".gpx" />
+        </label>
+        <p class="hint" id="start-hint">Tap the map to set a start point.</p>
+        <label class="control">
+          <span>Radius: <output id="radius-value">5.0</output> km</span>
+          <input type="range" id="radius-slider" min="1" max="10" step="0.5" value="5" />
+        </label>
+        <button id="find-button" disabled>Find course</button>
+      </section>
+      <section id="results" hidden></section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
