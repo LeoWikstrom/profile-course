@@ -2,6 +2,7 @@ import {
   buildGraph,
   edgeSamplePositions,
   filterToComponent,
+  pruneDeadEnds,
   sampleEdgeElevations,
   snapToNode,
 } from '../graph/build';
@@ -17,6 +18,8 @@ import type {
   TargetTransfer,
   WorkerToMain,
 } from '../shared/messages';
+import { beamSearch } from './beam';
+import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
 import type { CoursePath } from './score';
 
@@ -44,8 +47,9 @@ async function ensurePrepared(start: LatLon, radiusMeters: number): Promise<void
     throw new Error('No path or road found within 100 m of the start point');
   }
   const filtered = filterToComponent(full, snapped);
-  graph = filtered.graph;
-  startNode = filtered.startNode;
+  const pruned = pruneDeadEnds(filtered.graph, filtered.startNode);
+  graph = pruned.graph;
+  startNode = pruned.keepNode;
   post({ type: 'progress', stage: 'sampling elevation', fraction: 0.25, bestScore: null });
   await sampleEdgeElevations(graph, sampler);
   preparedKey = key;
@@ -105,41 +109,76 @@ async function search(
   target: TargetTransfer,
   targetLengthMeters: number,
   seed: number,
+  algorithm: 'beam' | 'walk',
 ): Promise<void> {
   cancelled = false;
+  const t0 = performance.now();
   await ensurePrepared(start, radiusMeters);
   const g = graph!;
   const profile: TargetProfile = target;
+  const tGraph = performance.now();
 
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
   let lastBestScore = Infinity;
-  const candidates = await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
-    seed,
-    onProgress: (done, total, best) => {
-      post({
-        type: 'progress',
-        stage: 'searching',
-        fraction: 0.3 + 0.7 * (done / total),
-        bestScore: best?.score ?? null,
-      });
-      if (best && best.score < lastBestScore) {
-        lastBestScore = best.score;
-        post({ type: 'bestSoFar', segments: pathSegments(g, best.path), score: best.score });
-      }
-    },
-    shouldCancel: () => cancelled,
-  });
+  const streamBest = (best: { path: CoursePath; score: number } | null) => {
+    if (best && best.score < lastBestScore) {
+      lastBestScore = best.score;
+      post({ type: 'bestSoFar', segments: pathSegments(g, best.path), score: best.score });
+    }
+  };
+
+  const candidates =
+    algorithm === 'walk'
+      ? await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
+          seed,
+          onProgress: (done, total, best) => {
+            post({
+              type: 'progress',
+              stage: 'searching',
+              fraction: 0.3 + 0.6 * (done / total),
+              bestScore: best?.score ?? null,
+            });
+            streamBest(best);
+          },
+          shouldCancel: () => cancelled,
+        })
+      : await beamSearch(g, startNode, profile, targetLengthMeters, {
+          seed,
+          onProgress: (bucket, total, best) => {
+            post({
+              type: 'progress',
+              stage: 'searching',
+              fraction: 0.3 + 0.6 * (bucket / total),
+              bestScore: best?.score ?? null,
+            });
+            streamBest(best);
+          },
+          shouldCancel: () => cancelled,
+        });
 
   if (cancelled) return;
-  const best = candidates[0];
-  if (!best) {
+  if (candidates.length === 0) {
     post({
       type: 'noCourse',
       message: 'No course found within ±3 % of the target length. Try a larger radius.',
     });
     return;
   }
-  post({ type: 'result', course: toResult(g, best, seed) });
+
+  const tSearch = performance.now();
+  post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
+  const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
+    shouldCancel: () => cancelled,
+  });
+  if (cancelled) return;
+
+  const tDone = performance.now();
+  console.log(
+    `search timings (${algorithm}): prepare ${(tGraph - t0).toFixed(0)} ms, ` +
+      `search ${(tSearch - tGraph).toFixed(0)} ms, improve ${(tDone - tSearch).toFixed(0)} ms, ` +
+      `score ${candidates[0]!.score.toFixed(2)} -> ${improved[0]!.score.toFixed(2)}`,
+  );
+  post({ type: 'result', course: toResult(g, improved[0]!, seed) });
 }
 
 onmessage = (event: MessageEvent<MainToWorker>) => {
@@ -155,7 +194,14 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'search':
-      search(msg.start, msg.radiusMeters, msg.target, msg.targetLengthMeters, msg.seed).catch(
+      search(
+        msg.start,
+        msg.radiusMeters,
+        msg.target,
+        msg.targetLengthMeters,
+        msg.seed,
+        msg.algorithm,
+      ).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

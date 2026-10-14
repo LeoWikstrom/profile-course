@@ -108,10 +108,44 @@ export function emd(a: Float32Array, b: Float32Array): number {
   return total / a.length;
 }
 
+/**
+ * Cost of running on class `row` when class `col` was wanted. Paved and
+ * gravel are near-equivalent for a runner; trails differ meaningfully.
+ */
+const SURFACE_COST: number[][] = [
+  // paved gravel trail unknown
+  [0.0, 0.1, 1.0, 0.4], // paved
+  [0.1, 0.0, 0.4, 0.3], // gravel
+  [1.0, 0.4, 0.0, 0.4], // trail
+  [0.4, 0.3, 0.4, 0.0], // unknown
+];
+
+/** Greedy transport of the actual mix onto the desired mix, weighted by SURFACE_COST. */
 export function surfaceMismatch(actual: SurfaceMix, desired: SurfaceMix): number {
-  let tv = 0;
-  for (let i = 0; i < 4; i++) tv += Math.abs(actual[i]! - desired[i]!);
-  return tv / 2;
+  const surplus = [0, 0, 0, 0];
+  const deficit = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    const d = actual[i]! - desired[i]!;
+    if (d > 0) surplus[i] = d;
+    else deficit[i] = -d;
+  }
+  const moves: { from: number; to: number; cost: number }[] = [];
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      if (i !== j) moves.push({ from: i, to: j, cost: SURFACE_COST[i]![j]! });
+    }
+  }
+  moves.sort((a, b) => a.cost - b.cost);
+  let total = 0;
+  for (const m of moves) {
+    const amount = Math.min(surplus[m.from]!, deficit[m.to]!);
+    if (amount > 0) {
+      surplus[m.from]! -= amount;
+      deficit[m.to]! -= amount;
+      total += amount * m.cost;
+    }
+  }
+  return total;
 }
 
 export function scoreCourse(

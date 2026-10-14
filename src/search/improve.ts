@@ -1,0 +1,108 @@
+import type { TargetProfile } from '../gpx/profile';
+import type { Graph } from '../graph/types';
+import { kShortestPaths, pathNodes } from '../graph/ksp';
+import {
+  assembleCourse,
+  scoreCourse,
+  DEFAULT_WEIGHTS,
+  MIX_ROAD,
+  type CoursePath,
+  type SurfaceMix,
+  type Weights,
+} from './score';
+import type { WalkCandidate } from './randomWalk';
+
+export interface ImproveOptions {
+  k?: number;
+  passes?: number;
+  windowStepM?: number;
+  windowLengthM?: number;
+  maxCandidates?: number;
+  desiredMix?: SurfaceMix;
+  weights?: Weights;
+  shouldCancel?: () => boolean;
+}
+
+function spliceWindow(
+  path: CoursePath,
+  from: number,
+  to: number,
+  replacement: { edges: number[]; dirs: number[] },
+): CoursePath {
+  return {
+    edges: [...path.edges.slice(0, from), ...replacement.edges, ...path.edges.slice(to)],
+    dirs: [...path.dirs.slice(0, from), ...replacement.dirs, ...path.dirs.slice(to)],
+  };
+}
+
+export async function improveCandidates(
+  graph: Graph,
+  startNode: number,
+  candidates: WalkCandidate[],
+  target: TargetProfile,
+  targetLengthM: number,
+  options: ImproveOptions = {},
+): Promise<WalkCandidate[]> {
+  const {
+    k = 5,
+    passes = 2,
+    windowStepM = 400,
+    windowLengthM = 800,
+    maxCandidates = 5,
+    desiredMix = MIX_ROAD,
+    weights = DEFAULT_WEIGHTS,
+    shouldCancel,
+  } = options;
+
+  const minLen = targetLengthM * 0.97;
+  const maxLen = targetLengthM * 1.03;
+  const improved: WalkCandidate[] = candidates.map((c) => ({ ...c }));
+
+  function scanOnce(start: WalkCandidate): WalkCandidate | null {
+    let current = start;
+    let anyChange = false;
+
+    for (let windowStart = 0; ; windowStart += windowStepM) {
+      if (shouldCancel?.()) break;
+      const nodes = pathNodes(graph, current.path, startNode);
+      const cum: number[] = [0];
+      for (const ei of current.path.edges) {
+        cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
+      }
+      if (windowStart >= cum[cum.length - 1]! - 300) break;
+
+      let fromIdx = 0;
+      while (fromIdx < nodes.length - 2 && cum[fromIdx]! < windowStart) fromIdx++;
+      let toIdx = fromIdx + 1;
+      while (toIdx < nodes.length - 1 && cum[toIdx]! - cum[fromIdx]! < windowLengthM) toIdx++;
+      const windowLen = cum[toIdx]! - cum[fromIdx]!;
+      if (windowLen < 300 || windowLen > 1500 || nodes[fromIdx] === nodes[toIdx]) continue;
+
+      const alts = kShortestPaths(graph, nodes[fromIdx]!, nodes[toIdx]!, k, windowLen * 1.6);
+      for (const alt of alts) {
+        const newLen = current.course.lengthM - windowLen + alt.lengthM;
+        if (newLen < minLen || newLen > maxLen) continue;
+        const newPath = spliceWindow(current.path, fromIdx, toIdx, alt);
+        const course = assembleCourse(graph, newPath);
+        const score = scoreCourse(course, target, desiredMix, weights);
+        if (score < current.score) {
+          current = { path: newPath, course, score };
+          anyChange = true;
+          break;
+        }
+      }
+    }
+    return anyChange ? current : null;
+  }
+
+  for (let ci = 0; ci < Math.min(improved.length, maxCandidates); ci++) {
+    for (let pass = 0; pass < passes; pass++) {
+      if (shouldCancel?.()) break;
+      const better = scanOnce(improved[ci]!);
+      if (!better) break;
+      improved[ci] = better;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return improved.sort((a, b) => a.score - b.score);
+}

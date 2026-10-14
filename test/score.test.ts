@@ -90,9 +90,19 @@ describe('emd', () => {
 });
 
 describe('surfaceMismatch', () => {
-  it('is 0 for a perfect match and 1 for a full mismatch', () => {
+  it('is 0 for a perfect match and 1 for paved vs trail', () => {
     expect(surfaceMismatch([1, 0, 0, 0], [1, 0, 0, 0])).toBe(0);
     expect(surfaceMismatch([0, 0, 1, 0], [1, 0, 0, 0])).toBe(1);
-    expect(surfaceMismatch([0.5, 0.5, 0, 0], [1, 0, 0, 0])).toBe(0.5);
+  });
+
+  it('paved and gravel are near-equivalent', () => {
+    expect(surfaceMismatch([0, 1, 0, 0], [1, 0, 0, 0])).toBeCloseTo(0.1);
+    expect(surfaceMismatch([0.5, 0.5, 0, 0], [1, 0, 0, 0])).toBeCloseTo(0.05);
+  });
+
+  it('gravel is closer to trail than paved is', () => {
+    const gravelOnTrail = surfaceMismatch([0, 1, 0, 0], [0, 0, 1, 0]);
+    const pavedOnTrail = surfaceMismatch([1, 0, 0, 0], [0, 0, 1, 0]);
+    expect(gravelOnTrail).toBeLessThan(pavedOnTrail);
   });
 });

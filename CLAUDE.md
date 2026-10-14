@@ -25,7 +25,9 @@ read it before starting a new phase.
    exclude `access=private|no`, `foot=no`).
 3. Build graph: nodes = shared OSM nodes + way endpoints; edges store length, geometry,
    surfaceClass (paved/gravel/trail/unknown), penalty, elevation every 25 m. Drop components
-   not connected to the start.
+   not connected to the start, then prune dead-end subtrees (cul-de-sacs, driveways) — Leo
+   explicitly wants no in-and-back-out detours. Surface mismatch uses a cost matrix where
+   paved↔gravel ≈ 0.1 (near-equivalent for a runner) but paved↔trail = 1.0.
 4. Sample elevation per edge from DEM tiles, bilinear, same median smoothing as GPX.
 5. Snap start to nearest graph node within 100 m.
 
@@ -62,7 +64,10 @@ Score (lower = better) on 25 m samples:
       `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`.
 - [x] **Phase 2 – First courses**: scorer (6 terms + tests), random-walk baseline, result panel
       with overlaid profile chart, GPX export.
-- [ ] **Phase 3 – Beam search**: Dijkstra pruning, beam search, local improvement, perf tuning.
+- [x] **Phase 3 – Beam search**: Dijkstra, beam search (per-node dedup for diversity,
+      same-bucket queue for short edges, incremental gain/loss in the partial score),
+      Yen's k-shortest-paths local improvement, baseline selectable in the debug panel.
+      Perf on a real phone graph still to verify in phase 5 testing.
 - [ ] **Phase 4 – Surface & options**: surface presets, safety penalties from tags,
       return-to-start, distance override, km range, seed/Try another, shareable URL.
 - [ ] **Phase 5 – Polish & ship**: error states, cancel, offline, PWA shell, GitHub Pages

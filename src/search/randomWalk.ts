@@ -98,7 +98,7 @@ export async function randomWalkSearch(
         w *= Math.exp(-2 * e.penalty);
         const uses = used.get(ei) ?? 0;
         if (uses > 0) w *= 0.3 ** uses;
-        if (ei === prevEdge) w *= 0.05; // immediate U-turn
+        if (ei === prevEdge) w *= 0.01; // immediate U-turn
         edgeIdx.push(ei);
         edgeWeight.push(w);
       }

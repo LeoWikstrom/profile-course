@@ -42,6 +42,7 @@ export type MainToWorker =
       target: TargetTransfer;
       targetLengthMeters: number;
       seed: number;
+      algorithm: 'beam' | 'walk';
     }
   | { type: 'cancel' };
 

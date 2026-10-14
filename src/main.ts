@@ -21,6 +21,7 @@ const gpxInput = document.getElementById('gpx-input') as HTMLInputElement;
 const gpxStats = document.getElementById('gpx-stats') as HTMLParagraphElement;
 const targetChart = document.getElementById('target-chart') as HTMLDivElement;
 const results = document.getElementById('results') as HTMLElement;
+const algorithmSelect = document.getElementById('algorithm-select') as HTMLSelectElement;
 
 let targetProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
@@ -48,6 +49,7 @@ function startSearch(): void {
     },
     targetLengthMeters: targetProfile.totalDistance,
     seed,
+    algorithm: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
   });
 }
 

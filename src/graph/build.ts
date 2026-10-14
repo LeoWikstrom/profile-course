@@ -163,6 +163,62 @@ export function snapToNode(graph: Graph, lat: number, lon: number, maxDistM = 10
   return best;
 }
 
+/**
+ * Remove dead-end subtrees (cul-de-sacs, driveways) so courses never need an
+ * in-and-back-out detour. The start node is kept even if it is a leaf.
+ */
+export function pruneDeadEnds(graph: Graph, keepNode: number): { graph: Graph; keepNode: number } {
+  const n = graph.nodeLat.length;
+  const alive = new Uint8Array(graph.edges.length).fill(1);
+  const degree = new Int32Array(n);
+  for (const e of graph.edges) {
+    degree[e.a]!++;
+    degree[e.b]!++;
+  }
+
+  const queue: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (degree[i] === 1 && i !== keepNode) queue.push(i);
+  }
+  while (queue.length > 0) {
+    const node = queue.pop()!;
+    if (degree[node] !== 1 || node === keepNode) continue;
+    for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
+      const ei = graph.adjEdge[k]!;
+      if (!alive[ei]) continue;
+      alive[ei] = 0;
+      const e = graph.edges[ei]!;
+      const next = e.a === node ? e.b : e.a;
+      degree[node]!--;
+      degree[next]!--;
+      if (degree[next] === 1 && next !== keepNode) queue.push(next);
+    }
+  }
+
+  const keptEdges = graph.edges.filter((_, ei) => alive[ei] === 1);
+  const used = new Uint8Array(n);
+  used[keepNode] = 1;
+  for (const e of keptEdges) {
+    used[e.a] = 1;
+    used[e.b] = 1;
+  }
+  const remap = new Int32Array(n).fill(-1);
+  const nodeLats: number[] = [];
+  const nodeLons: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (used[i]) {
+      remap[i] = nodeLats.length;
+      nodeLats.push(graph.nodeLat[i]!);
+      nodeLons.push(graph.nodeLon[i]!);
+    }
+  }
+  const edges = keptEdges.map((e) => ({ ...e, a: remap[e.a]!, b: remap[e.b]! }));
+  return {
+    graph: buildAdjacency(Float64Array.from(nodeLats), Float64Array.from(nodeLons), edges),
+    keepNode: remap[keepNode]!,
+  };
+}
+
 /** Keep only nodes/edges reachable from startNode; returns the new graph and start index. */
 export function filterToComponent(graph: Graph, startNode: number): { graph: Graph; startNode: number } {
   const n = graph.nodeLat.length;
