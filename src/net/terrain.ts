@@ -116,10 +116,30 @@ export class TerrainSampler {
     return bilinearSample(grid, TILE_SIZE, TILE_SIZE, (xf - tx) * TILE_SIZE - 0.5, (yf - ty) * TILE_SIZE - 0.5);
   }
 
+  /** Prefetches all needed tiles in parallel, then samples synchronously. */
   async elevations(lats: ArrayLike<number>, lons: ArrayLike<number>): Promise<Float32Array> {
+    const needed = new Map<string, [number, number]>();
+    for (let i = 0; i < lats.length; i++) {
+      const tx = Math.floor(lonToTileX(lons[i]!, this.zoom));
+      const ty = Math.floor(latToTileY(lats[i]!, this.zoom));
+      needed.set(`${this.zoom}/${tx}/${ty}`, [tx, ty]);
+    }
+    await Promise.all([...needed.values()].map(([tx, ty]) => this.loadTile(tx, ty)));
+
     const out = new Float32Array(lats.length);
     for (let i = 0; i < lats.length; i++) {
-      out[i] = await this.elevationAt(lats[i]!, lons[i]!);
+      const xf = lonToTileX(lons[i]!, this.zoom);
+      const yf = latToTileY(lats[i]!, this.zoom);
+      const tx = Math.floor(xf);
+      const ty = Math.floor(yf);
+      const grid = this.tiles.get(`${this.zoom}/${tx}/${ty}`)!;
+      out[i] = bilinearSample(
+        grid,
+        TILE_SIZE,
+        TILE_SIZE,
+        (xf - tx) * TILE_SIZE - 0.5,
+        (yf - ty) * TILE_SIZE - 0.5,
+      );
     }
     return out;
   }

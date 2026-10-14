@@ -1,38 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { PNG } from 'pngjs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildProfileFromSamples } from '../src/gpx/profile';
 import { buildGraph, filterToComponent, sampleEdgeElevations, snapToNode } from '../src/graph/build';
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
-import { TerrainSampler, decodeTerrarium } from '../src/net/terrain';
 import { assembleCourse } from '../src/search/score';
 import { mulberry32, randomWalkSearch } from '../src/search/randomWalk';
-
-// Node has no createImageBitmap/OffscreenCanvas; serve the fixture tile
-// pre-decoded through a sampler whose fetch is never reached for cached tiles.
-class FixtureSampler extends TerrainSampler {
-  private grid: Float32Array;
-  constructor() {
-    super(13, () => {
-      throw new Error('no network in tests');
-    });
-    const png = PNG.sync.read(readFileSync('test/fixtures/terrarium_13_4369_2479.png'));
-    this.grid = decodeTerrarium(new Uint8ClampedArray(png.data));
-  }
-  override async elevationAt(lat: number, lon: number): Promise<number> {
-    const { lonToTileX, latToTileY, bilinearSample, TILE_SIZE } = await import('../src/net/terrain');
-    const xf = lonToTileX(lon, 13);
-    const yf = latToTileY(lat, 13);
-    return bilinearSample(
-      this.grid,
-      TILE_SIZE,
-      TILE_SIZE,
-      (xf - Math.floor(xf)) * TILE_SIZE - 0.5,
-      (yf - Math.floor(yf)) * TILE_SIZE - 0.5,
-    );
-  }
-}
+import { FixtureSampler } from './helpers/fixtureSampler';
 
 describe('mulberry32', () => {
   it('is deterministic and in [0, 1)', () => {

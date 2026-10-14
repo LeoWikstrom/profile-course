@@ -39,7 +39,21 @@ async function ensurePrepared(start: LatLon, radiusMeters: number): Promise<void
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
-  const response = await fetchNetwork(start, radiusMeters);
+  let lastPosted = 0;
+  const response = await fetchNetwork(start, radiusMeters, {
+    onBytes: (bytes, endpoint) => {
+      if (bytes - lastPosted < 512 * 1024) return;
+      lastPosted = bytes;
+      const mb = (bytes / 1048576).toFixed(1);
+      const mirror = endpoint > 0 ? ', mirror' : '';
+      post({
+        type: 'progress',
+        stage: `fetching network (${mb} MB${mirror})`,
+        fraction: 0.05,
+        bestScore: null,
+      });
+    },
+  });
   post({ type: 'progress', stage: 'building graph', fraction: 0.15, bestScore: null });
   const full = buildGraph(response);
   const snapped = snapToNode(full, start.lat, start.lon);

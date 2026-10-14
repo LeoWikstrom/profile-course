@@ -88,6 +88,7 @@ export async function randomWalkSearch(
       const targetDeltaBase = targetElevationAt(target, dist);
       for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
         const ei = graph.adjEdge[k]!;
+        if (ei === prevEdge) continue; // no immediate in-and-back
         const e = graph.edges[ei]!;
         if (dist + e.lengthM > maxLen) continue;
         const elev = e.elev!;
@@ -98,7 +99,6 @@ export async function randomWalkSearch(
         w *= Math.exp(-2 * e.penalty);
         const uses = used.get(ei) ?? 0;
         if (uses > 0) w *= 0.3 ** uses;
-        if (ei === prevEdge) w *= 0.01; // immediate U-turn
         edgeIdx.push(ei);
         edgeWeight.push(w);
       }

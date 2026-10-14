@@ -58,6 +58,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   const surfaceLen: SurfaceMix = [0, 0, 0, 0];
   let penaltyLen = 0;
   let repeatLen = 0;
+  /** Edge index -> direction of first traversal (0/1). */
   const used = new Map<number, number>();
 
   let w = 0;
@@ -76,9 +77,15 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
-    const uses = used.get(ei) ?? 0;
-    if (uses > 0) repeatLen += e.lengthM;
-    used.set(ei, uses + 1);
+    const dir = forward ? 1 : 0;
+    const firstDir = used.get(ei);
+    if (firstDir === undefined) {
+      used.set(ei, dir);
+    } else {
+      // A lap in the same direction is a mild repeat; going back the way we
+      // came (in-and-back-again) counts double.
+      repeatLen += firstDir === dir ? e.lengthM : 2 * e.lengthM;
+    }
   }
 
   const start = samples[0] ?? 0;

@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { PNG } from 'pngjs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildProfileFromSamples, type TargetProfile } from '../src/gpx/profile';
 import {
@@ -11,39 +10,10 @@ import {
 } from '../src/graph/build';
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
-import {
-  TILE_SIZE,
-  TerrainSampler,
-  bilinearSample,
-  decodeTerrarium,
-  latToTileY,
-  lonToTileX,
-} from '../src/net/terrain';
 import { beamSearch } from '../src/search/beam';
 import { improveCandidates } from '../src/search/improve';
 import { randomWalkSearch } from '../src/search/randomWalk';
-
-class FixtureSampler extends TerrainSampler {
-  private grid: Float32Array;
-  constructor() {
-    super(13, () => {
-      throw new Error('no network in tests');
-    });
-    const png = PNG.sync.read(readFileSync('test/fixtures/terrarium_13_4369_2479.png'));
-    this.grid = decodeTerrarium(new Uint8ClampedArray(png.data));
-  }
-  override async elevationAt(lat: number, lon: number): Promise<number> {
-    const xf = lonToTileX(lon, 13);
-    const yf = latToTileY(lat, 13);
-    return bilinearSample(
-      this.grid,
-      TILE_SIZE,
-      TILE_SIZE,
-      (xf - Math.floor(xf)) * TILE_SIZE - 0.5,
-      (yf - Math.floor(yf)) * TILE_SIZE - 0.5,
-    );
-  }
-}
+import { FixtureSampler } from './helpers/fixtureSampler';
 
 let graph: Graph;
 let startNode: number;
@@ -85,6 +55,29 @@ describe('beamSearch on the Skatås fixture', () => {
     expect(beam.length).toBeGreaterThan(0);
     expect(walk.length).toBeGreaterThan(0);
     expect(beam[0]!.score).toBeLessThanOrEqual(walk[0]!.score + 0.01);
+  });
+});
+
+describe('no in-and-back-again', () => {
+  it('beam courses never reverse onto the edge they came from', async () => {
+    const target = flatTarget(1500);
+    const results = await beamSearch(graph, startNode, target, 1500, { seed: 5 });
+    expect(results.length).toBeGreaterThan(0);
+    for (const c of results) {
+      for (let i = 1; i < c.path.edges.length; i++) {
+        expect(c.path.edges[i]).not.toBe(c.path.edges[i - 1]);
+      }
+    }
+  });
+
+  it('random-walk courses never reverse onto the edge they came from', async () => {
+    const target = flatTarget(1000);
+    const results = await randomWalkSearch(graph, startNode, target, 1000, { seed: 5, walks: 300 });
+    for (const c of results) {
+      for (let i = 1; i < c.path.edges.length; i++) {
+        expect(c.path.edges[i]).not.toBe(c.path.edges[i - 1]);
+      }
+    }
   });
 });
 

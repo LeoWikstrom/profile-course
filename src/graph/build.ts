@@ -302,10 +302,30 @@ export function edgeSamplePositions(edge: GraphEdge): { lats: Float64Array; lons
 }
 
 export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler): Promise<void> {
+  const pending: { edge: GraphEdge; count: number }[] = [];
+  let total = 0;
   for (const edge of graph.edges) {
     if (edge.elev) continue;
-    const { lats, lons } = edgeSamplePositions(edge);
-    const raw = await sampler.elevations(lats, lons);
-    edge.elev = movingMedian5(raw);
+    const count = Math.max(2, Math.floor(edge.lengthM / SAMPLE_STEP_M) + 1);
+    pending.push({ edge, count });
+    total += count;
+  }
+  if (pending.length === 0) return;
+
+  const lats = new Float64Array(total);
+  const lons = new Float64Array(total);
+  let offset = 0;
+  for (const { edge } of pending) {
+    const pos = edgeSamplePositions(edge);
+    lats.set(pos.lats, offset);
+    lons.set(pos.lons, offset);
+    offset += pos.lats.length;
+  }
+
+  const elev = await sampler.elevations(lats, lons);
+  offset = 0;
+  for (const { edge, count } of pending) {
+    edge.elev = movingMedian5(elev.subarray(offset, offset + count));
+    offset += count;
   }
 }

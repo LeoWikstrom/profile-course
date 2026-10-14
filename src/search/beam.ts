@@ -85,13 +85,14 @@ function reconstruct(s: StateStore, i: number): CoursePath {
   return { edges, dirs };
 }
 
-function usedRecently(s: StateStore, i: number, edgeIndex: number): boolean {
+/** 0 = unused recently, 1 = reused same direction, 2 = reused in reverse. */
+function recentReuse(s: StateStore, i: number, edgeIndex: number, dir: number): number {
   let cur = i;
   for (let steps = 0; steps < REPEAT_LOOKBACK && cur >= 0 && s.edge[cur]! >= 0; steps++) {
-    if (s.edge[cur] === edgeIndex) return true;
+    if (s.edge[cur] === edgeIndex) return s.dir[cur] === dir ? 1 : 2;
     cur = s.parent[cur]!;
   }
-  return false;
+  return 0;
 }
 
 export async function beamSearch(
@@ -194,6 +195,9 @@ export async function beamSearch(
       const dist = s.dist[si]!;
       for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
         const ei = graph.adjEdge[k]!;
+        // Immediate same-edge reversal is the in-and-back-again pattern; with
+        // dead ends pruned there is always another way onward, so forbid it.
+        if (ei === s.edge[si]) continue;
         const e = graph.edges[ei]!;
         const newDist = dist + e.lengthM;
         if (newDist > maxLen) continue;
@@ -218,7 +222,8 @@ export async function beamSearch(
           prevRel = rel;
         }
 
-        const repeat = usedRecently(s, si, ei) ? e.lengthM : 0;
+        const reuse = recentReuse(s, si, ei, forward ? 1 : 0);
+        const repeat = reuse === 0 ? 0 : reuse === 1 ? e.lengthM : 2 * e.lengthM;
         const idx = s.node.length;
         s.node.push(otherNode(e, node));
         s.dist.push(newDist);
