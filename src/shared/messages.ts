@@ -5,6 +5,8 @@ export interface LatLon {
 
 export type MainToWorker =
   | { type: 'ping' }
+  | { type: 'elevate'; lats: Float64Array; lons: Float64Array }
+  | { type: 'prepare'; start: LatLon; radiusMeters: number }
   | {
       type: 'search';
       start: LatLon;
@@ -16,5 +18,13 @@ export type MainToWorker =
 
 export type WorkerToMain =
   | { type: 'pong' }
-  | { type: 'progress'; fraction: number; bestScore: number | null }
+  | { type: 'elevated'; elevations: Float32Array }
+  | {
+      type: 'prepared';
+      nodeCount: number;
+      edgeCount: number;
+      startNode: LatLon;
+      startElevation: number;
+    }
+  | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'error'; message: string };
