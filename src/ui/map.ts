@@ -7,6 +7,9 @@ import type { CourseSegment, LatLon } from '../shared/messages';
 
 const SURFACE_COLORS = ['#2563eb', '#d97706', '#16a34a', '#6b7280'];
 
+// Leaflet's _getIconUrl builds paths from imagePath, bypassing the bundler's
+// hashed asset URLs; removing it makes mergeOptions URLs win.
+delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)['_getIconUrl'];
 L.Icon.Default.mergeOptions({
   iconUrl: markerIcon,
   iconRetinaUrl: markerIcon2x,

@@ -60,7 +60,9 @@ export class TerrainSampler {
 
   constructor(
     private zoom: number = TERRAIN_ZOOM,
-    private fetchFn: typeof fetch = fetch,
+    // Wrapped: calling a stored bare `fetch` with `this` set to the sampler
+    // throws "Illegal invocation".
+    private fetchFn: typeof fetch = (...args) => fetch(...args),
   ) {}
 
   private async loadTile(tx: number, ty: number): Promise<Float32Array> {

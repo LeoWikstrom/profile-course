@@ -38,7 +38,7 @@ function cacheKey(center: LatLon, radiusMeters: number): string {
 export async function fetchNetwork(
   center: LatLon,
   radiusMeters: number,
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = (...args) => fetch(...args),
 ): Promise<OverpassResponse> {
   const key = cacheKey(center, radiusMeters);
   const cached = await cacheGet<OverpassResponse>(key);
