@@ -26,6 +26,12 @@ export interface BeamOptions {
   weights?: Weights;
   /** Courses must end back at the start node. */
   returnToStart?: boolean;
+  /**
+   * 1 = node is a valid course end (e.g. inside the start/finish radius).
+   * The course itself may go arbitrarily far away; states are pruned when
+   * they can no longer reach a valid end within the length budget.
+   */
+  validEnd?: Uint8Array | null;
   onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -129,6 +135,7 @@ export async function beamSearch(
     desiredMix = MIX_ROAD,
     weights = DEFAULT_WEIGHTS,
     returnToStart = false,
+    validEnd = null,
     onProgress,
     shouldCancel,
   } = options;
@@ -136,7 +143,19 @@ export async function beamSearch(
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
   const totalBuckets = Math.ceil(maxLen / bucketSizeM) + 1;
-  const distBack = returnToStart ? dijkstra(graph, [startNode]).dist : null;
+
+  let endMask: Uint8Array | null = null;
+  if (returnToStart) {
+    endMask = new Uint8Array(graph.nodeLat.length);
+    endMask[startNode] = 1;
+  } else if (validEnd) {
+    endMask = validEnd;
+  }
+  const endSources: number[] = [];
+  if (endMask) {
+    for (let i = 0; i < endMask.length; i++) if (endMask[i]) endSources.push(i);
+  }
+  const distBack = endMask ? dijkstra(graph, endSources).dist : null;
 
   // Course elevation is taken relative to the start node's elevation.
   let elev0 = 0;
@@ -275,7 +294,7 @@ export async function beamSearch(
         s.edge.push(ei);
         s.dir.push(forward ? 1 : 0);
 
-        if (newDist >= minLen && (!returnToStart || nextNode === startNode)) complete(idx);
+        if (newDist >= minLen && (!endMask || endMask[nextNode])) complete(idx);
         const nb = Math.floor(newDist / bucketSizeM);
         if (nb === b) bucket.push(idx);
         else if (nb < totalBuckets) buckets[nb]!.push(idx);

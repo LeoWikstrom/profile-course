@@ -118,6 +118,30 @@ describe('return to start', () => {
   });
 });
 
+describe('validEnd mask (start/finish zone)', () => {
+  it('beam courses end inside the zone even though they may leave it', async () => {
+    // Only nodes within 120 m of the start are valid ends.
+    const { haversineMeters } = await import('../src/shared/geo');
+    const validEnd = new Uint8Array(graph.nodeLat.length);
+    const sLat = graph.nodeLat[startNode]!;
+    const sLon = graph.nodeLon[startNode]!;
+    for (let i = 0; i < validEnd.length; i++) {
+      if (haversineMeters(sLat, sLon, graph.nodeLat[i]!, graph.nodeLon[i]!) <= 120) validEnd[i] = 1;
+    }
+    const target = flatTarget(1000);
+    const results = await beamSearch(graph, startNode, target, 1000, { seed: 1, validEnd });
+    expect(results.length).toBeGreaterThan(0);
+    for (const c of results) {
+      let node = startNode;
+      for (const ei of c.path.edges) {
+        const e = graph.edges[ei]!;
+        node = e.a === node ? e.b : e.a;
+      }
+      expect(validEnd[node]).toBe(1);
+    }
+  });
+});
+
 describe('improveCandidates', () => {
   it('never worsens the best score', async () => {
     const target = flatTarget(1200);

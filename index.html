@@ -21,7 +21,7 @@
         <div id="target-chart"></div>
         <p class="hint" id="start-hint">Tap the map to set a start point.</p>
         <label class="control">
-          <span>Radius: <output id="radius-value">5.0</output> km</span>
+          <span>Start/finish zone: <output id="radius-value">5.0</output> km (course may leave it)</span>
           <input type="range" id="radius-slider" min="1" max="10" step="0.5" value="5" />
         </label>
         <label class="control">
@@ -61,6 +61,7 @@
               <option value="5">5</option>
               <option value="8" selected>8</option>
               <option value="10">10</option>
+              <option value="15">15 (covers long courses)</option>
             </select>
           </label>
           <button id="download-area" disabled>Download area around start</button>

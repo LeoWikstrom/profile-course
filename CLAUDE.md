@@ -31,6 +31,11 @@ read it before starting a new phase.
 4. Sample elevation per edge from DEM tiles, bilinear, same median smoothing as GPX.
 5. Snap start to nearest graph node within 100 m.
 
+The radius is a **start/finish zone only** (Leo's decision): courses may go arbitrarily far
+outside it. The network is fetched at `radius + targetLength/2` (capped 15 km); nodes inside
+the user radius form a valid-end mask, and search states are Dijkstra-pruned when they can no
+longer reach a valid end within the length budget.
+
 ## Matching algorithm
 
 Score (lower = better) on 25 m samples:

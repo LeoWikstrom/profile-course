@@ -10,6 +10,7 @@ import type { Graph } from '../graph/types';
 import { deleteArea, listAreas, saveArea } from '../net/areaStore';
 import { fetchNetwork, getNetwork } from '../net/overpass';
 import { TerrainSampler } from '../net/terrain';
+import { haversineMeters } from '../shared/geo';
 import type { TargetProfile } from '../gpx/profile';
 import type {
   CourseResult,
@@ -53,15 +54,26 @@ async function downloadArea(center: LatLon, radiusMeters: number): Promise<void>
 
 let graph: Graph | null = null;
 let startNode = -1;
+let validEnd: Uint8Array | null = null;
 let preparedKey = '';
 let cancelled = false;
 
-async function ensurePrepared(start: LatLon, radiusMeters: number): Promise<void> {
-  const key = `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)}`;
+/** The course may leave the radius; cap how wide a network we are willing to pull. */
+const MAX_GRAPH_RADIUS_M = 15_000;
+
+async function ensurePrepared(
+  start: LatLon,
+  radiusMeters: number,
+  targetLengthMeters: number,
+): Promise<void> {
+  // The radius is only the start/finish zone. A course of length L can reach
+  // about L/2 out before it has to head back.
+  const graphRadius = Math.min(radiusMeters + targetLengthMeters / 2, MAX_GRAPH_RADIUS_M);
+  const key = `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)},${Math.round(graphRadius)}`;
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
-  const { response, source } = await getNetwork(start, radiusMeters, {
+  const { response, source } = await getNetwork(start, graphRadius, {
     onBytes: bytesProgress('fetching network', 0.05),
   });
   if (source === 'offline-area') {
@@ -77,6 +89,14 @@ async function ensurePrepared(start: LatLon, radiusMeters: number): Promise<void
   const pruned = pruneDeadEnds(filtered.graph, filtered.startNode);
   graph = pruned.graph;
   startNode = pruned.keepNode;
+
+  validEnd = new Uint8Array(graph.nodeLat.length);
+  for (let i = 0; i < validEnd.length; i++) {
+    if (haversineMeters(start.lat, start.lon, graph.nodeLat[i]!, graph.nodeLon[i]!) <= radiusMeters) {
+      validEnd[i] = 1;
+    }
+  }
+
   post({ type: 'progress', stage: 'sampling elevation', fraction: 0.25, bestScore: null });
   await sampleEdgeElevations(graph, sampler);
   preparedKey = key;
@@ -146,7 +166,7 @@ async function search(
 ): Promise<void> {
   cancelled = false;
   const t0 = performance.now();
-  await ensurePrepared(start, radiusMeters);
+  await ensurePrepared(start, radiusMeters, targetLengthMeters);
   const g = graph!;
   const profile: TargetProfile = target;
   const tGraph = performance.now();
@@ -166,6 +186,7 @@ async function search(
           seed,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
+          validEnd,
           onProgress: (done, total, best) => {
             post({
               type: 'progress',
@@ -181,6 +202,7 @@ async function search(
           seed,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
+          validEnd,
           onProgress: (bucket, total, best) => {
             post({
               type: 'progress',

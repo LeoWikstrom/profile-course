@@ -37,6 +37,8 @@ export interface RandomWalkOptions {
   weights?: Weights;
   /** Courses must end back at the start node. */
   returnToStart?: boolean;
+  /** 1 = node is a valid course end; see BeamOptions.validEnd. */
+  validEnd?: Uint8Array | null;
   onProgress?: (done: number, total: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -64,6 +66,7 @@ export async function randomWalkSearch(
     desiredMix = MIX_ROAD,
     weights = DEFAULT_WEIGHTS,
     returnToStart = false,
+    validEnd = null,
     onProgress,
     shouldCancel,
   } = options;
@@ -71,7 +74,19 @@ export async function randomWalkSearch(
   const rng = mulberry32(seed);
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
-  const distBack = returnToStart ? dijkstra(graph, [startNode]).dist : null;
+
+  let endMask: Uint8Array | null = null;
+  if (returnToStart) {
+    endMask = new Uint8Array(graph.nodeLat.length);
+    endMask[startNode] = 1;
+  } else if (validEnd) {
+    endMask = validEnd;
+  }
+  const endSources: number[] = [];
+  if (endMask) {
+    for (let i = 0; i < endMask.length; i++) if (endMask[i]) endSources.push(i);
+  }
+  const distBack = endMask ? dijkstra(graph, endSources).dist : null;
   const best: WalkCandidate[] = [];
 
   const edgeIdx: number[] = [];
@@ -87,7 +102,7 @@ export async function randomWalkSearch(
     let prevEdge = -1;
     let failed = false;
 
-    while (dist < minLen || (returnToStart && node !== startNode)) {
+    while (dist < minLen || (endMask !== null && !endMask[node])) {
       if (dist >= maxLen) {
         failed = true;
         break;
@@ -145,7 +160,7 @@ export async function randomWalkSearch(
       dist >= minLen &&
       dist <= maxLen &&
       path.edges.length > 0 &&
-      (!returnToStart || node === startNode)
+      (!endMask || endMask[node])
     ) {
       const course = assembleCourse(graph, path);
       const score = scoreCourse(course, target, desiredMix, weights);
