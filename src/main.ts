@@ -31,7 +31,9 @@ const surfaceSelect = document.getElementById('surface-select') as HTMLSelectEle
 const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
 const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
 const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
+const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
 const areasList = document.getElementById('areas-list') as HTMLUListElement;
+const rangeLabel = document.getElementById('range-label') as HTMLOutputElement;
 
 let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
@@ -145,6 +147,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       renderAreas(msg.areas);
       downloadAreaButton.textContent = 'Download area around start';
       downloadAreaButton.disabled = map.getStart() === null;
+      areaProgress.hidden = true;
       break;
     case 'elevated': {
       if (!pendingGpx) break;
@@ -163,6 +166,8 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'progress':
       if (msg.stage.startsWith('downloading area')) {
         downloadAreaButton.textContent = msg.stage;
+        areaProgress.hidden = false;
+        areaProgress.value = msg.fraction;
         break;
       }
       findButton.textContent =
@@ -206,6 +211,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       startHint.textContent = msg.message;
       downloadAreaButton.textContent = 'Download area around start';
       downloadAreaButton.disabled = map.getStart() === null;
+      areaProgress.hidden = true;
       searchDone();
       break;
   }
@@ -230,9 +236,15 @@ function setFullProfile(profile: TargetProfile): void {
   const totalKm = profile.totalDistance / 1000;
   rangeTo.max = totalKm.toFixed(1);
   rangeFrom.max = rangeTo.max;
+  if (!rangeFrom.value) rangeFrom.value = '0';
   if (!rangeTo.value || Number(rangeTo.value) > totalKm) rangeTo.value = totalKm.toFixed(1);
   if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
+  updateRangeLabel();
   updateFindEnabled();
+}
+
+function updateRangeLabel(): void {
+  rangeLabel.textContent = `${Number(rangeFrom.value).toFixed(1)} – ${Number(rangeTo.value).toFixed(1)} km`;
 }
 
 function refreshTargetChart(): void {
@@ -244,8 +256,21 @@ function refreshTargetChart(): void {
   }
 }
 
-rangeFrom.addEventListener('change', refreshTargetChart);
-rangeTo.addEventListener('change', refreshTargetChart);
+// Dual-handle slider: keep the handles at least 0.5 km apart.
+rangeFrom.addEventListener('input', () => {
+  if (Number(rangeFrom.value) > Number(rangeTo.value) - 0.5) {
+    rangeFrom.value = String(Math.max(0, Number(rangeTo.value) - 0.5));
+  }
+  updateRangeLabel();
+  refreshTargetChart();
+});
+rangeTo.addEventListener('input', () => {
+  if (Number(rangeTo.value) < Number(rangeFrom.value) + 0.5) {
+    rangeTo.value = String(Math.min(Number(rangeTo.max), Number(rangeFrom.value) + 0.5));
+  }
+  updateRangeLabel();
+  refreshTargetChart();
+});
 
 gpxInput.addEventListener('change', async () => {
   const file = gpxInput.files?.[0];

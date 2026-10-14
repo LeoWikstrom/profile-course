@@ -43,11 +43,28 @@ function bytesProgress(stage: string, fraction: number): (bytes: number, endpoin
 }
 
 async function downloadArea(center: LatLon, radiusMeters: number): Promise<void> {
-  post({ type: 'progress', stage: 'downloading area', fraction: 0.1, bestScore: null });
+  post({ type: 'progress', stage: 'downloading area', fraction: 0.02, bestScore: null });
+  // Overpass streams chunked without a length header; estimate the total from
+  // the area (~0.3 MB/km² in a city, clamped) and cap the bar at 95 %.
+  const km2 = Math.PI * (radiusMeters / 1000) ** 2;
+  const estBytes = Math.max(2e6, km2 * 0.3e6);
+  let lastPosted = 0;
   const response = await fetchNetwork(center, radiusMeters, {
     rounds: 4,
-    onBytes: bytesProgress('downloading area', 0.5),
+    onBytes: (bytes, endpoint) => {
+      if (bytes - lastPosted < 256 * 1024) return;
+      lastPosted = bytes;
+      const mb = (bytes / 1048576).toFixed(1);
+      const mirror = endpoint > 0 ? ', mirror' : '';
+      post({
+        type: 'progress',
+        stage: `downloading area (${mb} MB${mirror})`,
+        fraction: Math.min(0.95, bytes / estBytes),
+        bestScore: null,
+      });
+    },
   });
+  post({ type: 'progress', stage: 'downloading area (saving)', fraction: 0.97, bestScore: null });
   await saveArea(center, radiusMeters, response);
   post({ type: 'areas', areas: await listAreas() });
 }

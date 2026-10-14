@@ -29,10 +29,10 @@
           <input type="number" id="distance-input" min="1" max="100" step="0.1" />
         </label>
         <div class="control" id="range-control" hidden>
-          <span>Match race from–to (km)</span>
-          <div class="row">
-            <input type="number" id="range-from" min="0" step="0.5" value="0" aria-label="From km" />
-            <input type="number" id="range-to" min="0" step="0.5" aria-label="To km" />
+          <span>Match race section: <output id="range-label"></output></span>
+          <div class="dual-slider">
+            <input type="range" id="range-from" min="0" step="0.1" value="0" aria-label="From km" />
+            <input type="range" id="range-to" min="0" step="0.1" aria-label="To km" />
           </div>
         </div>
         <label class="control">
@@ -65,6 +65,7 @@
             </select>
           </label>
           <button id="download-area" disabled>Download area around start</button>
+          <progress id="area-progress" max="1" value="0" hidden></progress>
           <ul id="areas-list" class="hint"></ul>
         </details>
         <details id="debug-panel">
