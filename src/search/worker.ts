@@ -7,7 +7,8 @@ import {
   snapToNode,
 } from '../graph/build';
 import type { Graph } from '../graph/types';
-import { fetchNetwork } from '../net/overpass';
+import { deleteArea, listAreas, saveArea } from '../net/areaStore';
+import { fetchNetwork, getNetwork } from '../net/overpass';
 import { TerrainSampler } from '../net/terrain';
 import type { TargetProfile } from '../gpx/profile';
 import type {
@@ -29,6 +30,27 @@ function post(msg: WorkerToMain): void {
 
 const sampler = new TerrainSampler();
 
+function bytesProgress(stage: string, fraction: number): (bytes: number, endpoint: number) => void {
+  let lastPosted = 0;
+  return (bytes, endpoint) => {
+    if (bytes - lastPosted < 512 * 1024) return;
+    lastPosted = bytes;
+    const mb = (bytes / 1048576).toFixed(1);
+    const mirror = endpoint > 0 ? ', mirror' : '';
+    post({ type: 'progress', stage: `${stage} (${mb} MB${mirror})`, fraction, bestScore: null });
+  };
+}
+
+async function downloadArea(center: LatLon, radiusMeters: number): Promise<void> {
+  post({ type: 'progress', stage: 'downloading area', fraction: 0.1, bestScore: null });
+  const response = await fetchNetwork(center, radiusMeters, {
+    rounds: 4,
+    onBytes: bytesProgress('downloading area', 0.5),
+  });
+  await saveArea(center, radiusMeters, response);
+  post({ type: 'areas', areas: await listAreas() });
+}
+
 let graph: Graph | null = null;
 let startNode = -1;
 let preparedKey = '';
@@ -39,21 +61,12 @@ async function ensurePrepared(start: LatLon, radiusMeters: number): Promise<void
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
-  let lastPosted = 0;
-  const response = await fetchNetwork(start, radiusMeters, {
-    onBytes: (bytes, endpoint) => {
-      if (bytes - lastPosted < 512 * 1024) return;
-      lastPosted = bytes;
-      const mb = (bytes / 1048576).toFixed(1);
-      const mirror = endpoint > 0 ? ', mirror' : '';
-      post({
-        type: 'progress',
-        stage: `fetching network (${mb} MB${mirror})`,
-        fraction: 0.05,
-        bestScore: null,
-      });
-    },
+  const { response, source } = await getNetwork(start, radiusMeters, {
+    onBytes: bytesProgress('fetching network', 0.05),
   });
+  if (source === 'offline-area') {
+    post({ type: 'progress', stage: 'using offline area', fraction: 0.1, bestScore: null });
+  }
   post({ type: 'progress', stage: 'building graph', fraction: 0.15, bestScore: null });
   const full = buildGraph(response);
   const snapped = snapToNode(full, start.lat, start.lon);
@@ -226,6 +239,21 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
+      break;
+    case 'downloadArea':
+      downloadArea(msg.center, msg.radiusMeters).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    case 'listAreas':
+      listAreas()
+        .then((areas) => post({ type: 'areas', areas }))
+        .catch((err: unknown) => post({ type: 'error', message: String(err) }));
+      break;
+    case 'deleteArea':
+      deleteArea(msg.id)
+        .then((areas) => post({ type: 'areas', areas }))
+        .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'cancel':
       cancelled = true;

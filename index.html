@@ -49,6 +49,23 @@
           <span>Return to start</span>
         </label>
         <button id="find-button" disabled>Find course</button>
+        <details id="areas-panel">
+          <summary class="hint">Offline areas</summary>
+          <p class="hint">
+            Download the network around the start marker once; searches inside a saved area skip
+            the (often unreliable) Overpass servers entirely.
+          </p>
+          <label class="control">
+            <span>Area radius (km)</span>
+            <select id="area-radius">
+              <option value="5">5</option>
+              <option value="8" selected>8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+          <button id="download-area" disabled>Download area around start</button>
+          <ul id="areas-list" class="hint"></ul>
+        </details>
         <details id="debug-panel">
           <summary class="hint">Debug</summary>
           <label class="control">

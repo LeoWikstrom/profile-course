@@ -32,9 +32,22 @@ export interface CourseResult {
   seed: number;
 }
 
+export interface AreaInfo {
+  id: string;
+  lat: number;
+  lon: number;
+  radiusMeters: number;
+  savedAt: number;
+  ways: number;
+  nodes: number;
+}
+
 export type MainToWorker =
   | { type: 'ping' }
   | { type: 'elevate'; lats: Float64Array; lons: Float64Array }
+  | { type: 'downloadArea'; center: LatLon; radiusMeters: number }
+  | { type: 'listAreas' }
+  | { type: 'deleteArea'; id: string }
   | {
       type: 'search';
       start: LatLon;
@@ -58,6 +71,7 @@ export type WorkerToMain =
       startNode: LatLon;
       startElevation: number;
     }
+  | { type: 'areas'; areas: AreaInfo[] }
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
   | { type: 'result'; course: CourseResult }

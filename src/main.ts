@@ -29,6 +29,9 @@ const rangeFrom = document.getElementById('range-from') as HTMLInputElement;
 const rangeTo = document.getElementById('range-to') as HTMLInputElement;
 const surfaceSelect = document.getElementById('surface-select') as HTMLSelectElement;
 const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
+const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
+const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
+const areasList = document.getElementById('areas-list') as HTMLUListElement;
 
 let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
@@ -115,11 +118,32 @@ function searchDone(): void {
   updateFindEnabled();
 }
 
+function renderAreas(areas: import('./shared/messages').AreaInfo[]): void {
+  areasList.textContent = '';
+  for (const a of areas) {
+    const li = document.createElement('li');
+    const date = new Date(a.savedAt).toISOString().slice(0, 10);
+    li.textContent = `${(a.radiusMeters / 1000).toFixed(0)} km @ ${a.lat.toFixed(3)}, ${a.lon.toFixed(3)} (${a.ways} ways, ${date}) `;
+    const del = document.createElement('button');
+    del.textContent = 'Remove';
+    del.style.width = 'auto';
+    del.style.minHeight = '28px';
+    del.addEventListener('click', () => send({ type: 'deleteArea', id: a.id }));
+    li.appendChild(del);
+    areasList.appendChild(li);
+  }
+}
+
 worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   const msg = event.data;
   switch (msg.type) {
     case 'pong':
       console.log('worker alive');
+      break;
+    case 'areas':
+      renderAreas(msg.areas);
+      downloadAreaButton.textContent = 'Download area around start';
+      downloadAreaButton.disabled = map.getStart() === null;
       break;
     case 'elevated': {
       if (!pendingGpx) break;
@@ -136,6 +160,10 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       );
       break;
     case 'progress':
+      if (msg.stage.startsWith('downloading area')) {
+        downloadAreaButton.textContent = msg.stage;
+        break;
+      }
       findButton.textContent =
         msg.bestScore !== null
           ? `${msg.stage} ${Math.round(msg.fraction * 100)} % (best ${msg.bestScore.toFixed(1)})`
@@ -164,11 +192,22 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'error':
       console.warn('worker:', msg.message);
       startHint.textContent = msg.message;
+      downloadAreaButton.textContent = 'Download area around start';
+      downloadAreaButton.disabled = map.getStart() === null;
       searchDone();
       break;
   }
 };
 send({ type: 'ping' });
+send({ type: 'listAreas' });
+
+downloadAreaButton.addEventListener('click', () => {
+  const start = map.getStart();
+  if (!start) return;
+  downloadAreaButton.disabled = true;
+  downloadAreaButton.textContent = 'Downloading…';
+  send({ type: 'downloadArea', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
+});
 
 function setFullProfile(profile: TargetProfile): void {
   fullProfile = profile;
@@ -227,6 +266,7 @@ radiusSlider.addEventListener('input', () => {
 
 map.onStartChange((start) => {
   startHint.textContent = `Start: ${start.lat.toFixed(5)}, ${start.lon.toFixed(5)} (drag to adjust)`;
+  downloadAreaButton.disabled = false;
   updateFindEnabled();
 });
 
