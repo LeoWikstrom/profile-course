@@ -3,7 +3,9 @@ import 'leaflet/dist/leaflet.css';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-import type { LatLon } from '../shared/messages';
+import type { CourseSegment, LatLon } from '../shared/messages';
+
+const SURFACE_COLORS = ['#2563eb', '#d97706', '#16a34a', '#6b7280'];
 
 L.Icon.Default.mergeOptions({
   iconUrl: markerIcon,
@@ -15,6 +17,8 @@ export interface MapController {
   getStart(): LatLon | null;
   setRadius(meters: number): void;
   onStartChange(cb: (start: LatLon) => void): void;
+  drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
+  clearCourse(): void;
 }
 
 export function createMap(container: string): MapController {
@@ -55,7 +59,38 @@ export function createMap(container: string): MapController {
 
   map.on('click', (e: L.LeafletMouseEvent) => placeStart(e.latlng));
 
+  let courseLayer: L.LayerGroup | null = null;
+
   return {
+    drawCourse(segments, options) {
+      courseLayer?.remove();
+      courseLayer = L.layerGroup();
+      const opacity = options?.faded ? 0.45 : 0.9;
+      for (const seg of segments) {
+        const latlngs: [number, number][] = [];
+        for (let i = 0; i < seg.lats.length; i++) latlngs.push([seg.lats[i]!, seg.lons[i]!]);
+        L.polyline(latlngs, {
+          color: SURFACE_COLORS[seg.surface] ?? SURFACE_COLORS[3]!,
+          weight: 4,
+          opacity,
+        }).addTo(courseLayer);
+      }
+      const last = segments[segments.length - 1];
+      if (last && !options?.faded) {
+        const i = last.lats.length - 1;
+        L.circleMarker([last.lats[i]!, last.lons[i]!], {
+          radius: 6,
+          color: '#111',
+          fillColor: '#fff',
+          fillOpacity: 1,
+        }).addTo(courseLayer);
+      }
+      courseLayer.addTo(map);
+    },
+    clearCourse() {
+      courseLayer?.remove();
+      courseLayer = null;
+    },
     getStart() {
       if (!marker) return null;
       const { lat, lng } = marker.getLatLng();

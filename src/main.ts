@@ -3,6 +3,7 @@ import { parseGpx, type ParsedGpx } from './gpx/parse';
 import type { MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderProfileChart } from './ui/profileChart';
+import { renderResult } from './ui/resultPanel';
 import SearchWorker from './search/worker?worker';
 
 const map = createMap('map');
@@ -19,9 +20,42 @@ const startHint = document.getElementById('start-hint') as HTMLParagraphElement;
 const gpxInput = document.getElementById('gpx-input') as HTMLInputElement;
 const gpxStats = document.getElementById('gpx-stats') as HTMLParagraphElement;
 const targetChart = document.getElementById('target-chart') as HTMLDivElement;
+const results = document.getElementById('results') as HTMLElement;
 
 let targetProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
+let seed = 1;
+let searching = false;
+
+function startSearch(): void {
+  const start = map.getStart();
+  if (!start || !targetProfile) return;
+  searching = true;
+  results.hidden = true;
+  map.clearCourse();
+  findButton.disabled = true;
+  findButton.textContent = 'Working…';
+  send({
+    type: 'search',
+    start,
+    radiusMeters: Number(radiusSlider.value) * 1000,
+    target: {
+      totalDistance: targetProfile.totalDistance,
+      samples: targetProfile.samples,
+      totalGain: targetProfile.totalGain,
+      totalLoss: targetProfile.totalLoss,
+      gradientHistogram: targetProfile.gradientHistogram,
+    },
+    targetLengthMeters: targetProfile.totalDistance,
+    seed,
+  });
+}
+
+function searchDone(): void {
+  searching = false;
+  findButton.textContent = 'Find course';
+  updateFindEnabled();
+}
 
 worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   const msg = event.data;
@@ -42,18 +76,35 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
           `start node at ${msg.startNode.lat.toFixed(5)}, ${msg.startNode.lon.toFixed(5)}, ` +
           `elevation ${msg.startElevation.toFixed(1)} m`,
       );
-      startHint.textContent = `Start snapped; graph: ${msg.nodeCount} nodes, ${msg.edgeCount} edges, start at ${msg.startElevation.toFixed(0)} m`;
-      findButton.disabled = false;
-      findButton.textContent = 'Find course';
       break;
     case 'progress':
-      findButton.textContent = `Working: ${msg.stage}…`;
+      findButton.textContent =
+        msg.bestScore !== null
+          ? `${msg.stage} ${Math.round(msg.fraction * 100)} % (best ${msg.bestScore.toFixed(1)})`
+          : `${msg.stage} ${Math.round(msg.fraction * 100)} %`;
+      break;
+    case 'bestSoFar':
+      map.drawCourse(msg.segments, { faded: true });
+      break;
+    case 'result':
+      map.drawCourse(msg.course.segments);
+      if (targetProfile) {
+        renderResult(results, msg.course, targetProfile, () => {
+          seed += 1;
+          startSearch();
+        });
+      }
+      searchDone();
+      break;
+    case 'noCourse':
+      startHint.textContent = msg.message;
+      map.clearCourse();
+      searchDone();
       break;
     case 'error':
       console.warn('worker:', msg.message);
       startHint.textContent = msg.message;
-      findButton.disabled = false;
-      findButton.textContent = 'Find course';
+      searchDone();
       break;
   }
 };
@@ -102,12 +153,8 @@ map.onStartChange((start) => {
 });
 
 function updateFindEnabled(): void {
+  if (searching) return;
   findButton.disabled = !(targetProfile !== null && map.getStart() !== null);
 }
 
-findButton.addEventListener('click', () => {
-  const start = map.getStart();
-  if (!start || !targetProfile) return;
-  findButton.disabled = true;
-  send({ type: 'prepare', start, radiusMeters: Number(radiusSlider.value) * 1000 });
-});
+findButton.addEventListener('click', startSearch);

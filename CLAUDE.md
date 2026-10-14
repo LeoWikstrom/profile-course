@@ -56,10 +56,11 @@ Score (lower = better) on 25 m samples:
 
 - [x] **Phase 0 – Scaffold**: Vite + TS strict + Vitest + ESLint + Prettier; Leaflet map, tap
       sets start marker, radius slider draws circle; worker wired with typed messages.
-- [ ] **Phase 1 – Data in**: GPX parser + profile builder (tests on the three fixtures),
+- [x] **Phase 1 – Data in**: GPX parser + profile builder (tests on the three fixtures),
       Overpass client + cache, graph builder, Terrarium fetcher/decoder/sampler, edge
-      elevation, start snapping. Verify Terrarium URL pattern first.
-- [ ] **Phase 2 – First courses**: scorer (6 terms + tests), random-walk baseline, result panel
+      elevation, start snapping. Terrarium URL verified:
+      `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`.
+- [x] **Phase 2 – First courses**: scorer (6 terms + tests), random-walk baseline, result panel
       with overlaid profile chart, GPX export.
 - [ ] **Phase 3 – Beam search**: Dijkstra pruning, beam search, local improvement, perf tuning.
 - [ ] **Phase 4 – Surface & options**: surface presets, safety penalties from tags,
