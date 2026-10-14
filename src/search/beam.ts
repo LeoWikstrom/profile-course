@@ -1,4 +1,5 @@
 import type { TargetProfile } from '../gpx/profile';
+import { dijkstra } from '../graph/dijkstra';
 import { otherNode, type Graph } from '../graph/types';
 import {
   assembleCourse,
@@ -18,8 +19,10 @@ export interface BeamOptions {
   bucketSizeM?: number;
   lengthTolerance?: number;
   keepBest?: number;
-  desiredMix?: SurfaceMix;
+  desiredMix?: SurfaceMix | null;
   weights?: Weights;
+  /** Courses must end back at the start node. */
+  returnToStart?: boolean;
   onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -110,6 +113,7 @@ export async function beamSearch(
     keepBest = 20,
     desiredMix = MIX_ROAD,
     weights = DEFAULT_WEIGHTS,
+    returnToStart = false,
     onProgress,
     shouldCancel,
   } = options;
@@ -117,6 +121,7 @@ export async function beamSearch(
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
   const totalBuckets = Math.ceil(maxLen / bucketSizeM) + 1;
+  const distBack = returnToStart ? dijkstra(graph, [startNode]).dist : null;
 
   // Course elevation is taken relative to the start node's elevation.
   let elev0 = 0;
@@ -201,6 +206,8 @@ export async function beamSearch(
         const e = graph.edges[ei]!;
         const newDist = dist + e.lengthM;
         if (newDist > maxLen) continue;
+        const nextNode = otherNode(e, node);
+        if (distBack && newDist + distBack[nextNode]! > maxLen) continue;
 
         const elev = e.elev!;
         const m = elev.length;
@@ -225,7 +232,7 @@ export async function beamSearch(
         const reuse = recentReuse(s, si, ei, forward ? 1 : 0);
         const repeat = reuse === 0 ? 0 : reuse === 1 ? e.lengthM : 2 * e.lengthM;
         const idx = s.node.length;
-        s.node.push(otherNode(e, node));
+        s.node.push(nextNode);
         s.dist.push(newDist);
         s.sq.push(sq);
         s.sampleCount.push(s.sampleCount[si]! + m - 1);
@@ -237,7 +244,7 @@ export async function beamSearch(
         s.edge.push(ei);
         s.dir.push(forward ? 1 : 0);
 
-        if (newDist >= minLen) complete(idx);
+        if (newDist >= minLen && (!returnToStart || nextNode === startNode)) complete(idx);
         const nb = Math.floor(newDist / bucketSizeM);
         if (nb === b) bucket.push(idx);
         else if (nb < totalBuckets) buckets[nb]!.push(idx);

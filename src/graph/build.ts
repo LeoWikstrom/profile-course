@@ -49,13 +49,29 @@ export function classifySurface(tags: Record<string, string>): SurfaceClass {
   return SURFACE_UNKNOWN;
 }
 
+const CAR_HIGHWAYS = new Set(['residential', 'unclassified', 'tertiary']);
+
 export function edgePenalty(tags: Record<string, string>): number {
   const highway = tags['highway'];
   if (highway === 'steps') return 1.0;
+
+  let p = 0;
   const tracktype = tags['tracktype'];
-  if (tracktype === 'grade4' || tracktype === 'grade5') return 0.5;
-  if (highway === 'tertiary') return 0.4;
-  return 0;
+  if (tracktype === 'grade4' || tracktype === 'grade5') p += 0.5;
+  if (highway === 'tertiary') p += 0.4;
+
+  if (highway && CAR_HIGHWAYS.has(highway)) {
+    const sidewalk =
+      tags['sidewalk'] ?? tags['sidewalk:left'] ?? tags['sidewalk:right'] ?? tags['sidewalk:both'];
+    if (!sidewalk || sidewalk === 'no' || sidewalk === 'none') p += 0.2;
+    const maxspeed = Number.parseInt(tags['maxspeed'] ?? '', 10);
+    if (maxspeed > 50) p += 0.3;
+  }
+
+  if (highway === 'cycleway' || tags['foot'] === 'designated') p -= 0.1;
+  if (tags['lit'] === 'yes') p -= 0.05;
+
+  return Math.max(-0.1, p);
 }
 
 export function buildGraph(response: OverpassResponse): Graph {

@@ -93,6 +93,14 @@ export function buildProfileFromSamples(samples: Float32Array, totalDistance: nu
   };
 }
 
+/** Cut a [fromM, toM] window out of a profile and rebase it to its own start. */
+export function sliceProfile(profile: TargetProfile, fromM: number, toM: number): TargetProfile {
+  const last = profile.samples.length - 1;
+  const i0 = Math.max(0, Math.min(Math.round(fromM / SAMPLE_STEP_M), last - 1));
+  const i1 = Math.max(i0 + 1, Math.min(Math.round(toM / SAMPLE_STEP_M), last));
+  return buildProfileFromSamples(profile.samples.slice(i0, i1 + 1), (i1 - i0) * SAMPLE_STEP_M);
+}
+
 /** Points must all carry elevation; fetch missing elevation before calling. */
 export function buildTargetProfile(points: GpxPoint[]): TargetProfile {
   const n = points.length;

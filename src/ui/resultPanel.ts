@@ -54,8 +54,22 @@ export function renderResult(
   container.appendChild(download);
 
   const tryAnother = document.createElement('button');
-  tryAnother.textContent = 'Try another';
+  tryAnother.textContent = `Try another (seed ${course.seed + 1})`;
   tryAnother.style.marginTop = '8px';
   tryAnother.addEventListener('click', onTryAnother);
   container.appendChild(tryAnother);
+
+  const copyLink = document.createElement('button');
+  copyLink.textContent = 'Copy link';
+  copyLink.style.marginTop = '8px';
+  copyLink.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      copyLink.textContent = 'Link copied';
+      setTimeout(() => (copyLink.textContent = 'Copy link'), 1500);
+    } catch {
+      copyLink.textContent = location.href;
+    }
+  });
+  container.appendChild(copyLink);
 }

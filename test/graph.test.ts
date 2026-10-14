@@ -38,6 +38,21 @@ describe('edgePenalty', () => {
     expect(edgePenalty({ highway: 'tertiary' })).toBeGreaterThan(0);
     expect(edgePenalty({ highway: 'footway' })).toBe(0);
   });
+
+  it('car roads without sidewalks or with high maxspeed are worse', () => {
+    const bare = edgePenalty({ highway: 'residential' });
+    const withSidewalk = edgePenalty({ highway: 'residential', sidewalk: 'both' });
+    const fast = edgePenalty({ highway: 'residential', sidewalk: 'both', maxspeed: '70' });
+    expect(bare).toBeGreaterThan(withSidewalk);
+    expect(fast).toBeGreaterThan(withSidewalk);
+  });
+
+  it('cycleways, designated foot paths and lit ways get a bonus', () => {
+    expect(edgePenalty({ highway: 'cycleway' })).toBeLessThan(0);
+    expect(edgePenalty({ highway: 'footway', foot: 'designated' })).toBeLessThan(0);
+    expect(edgePenalty({ highway: 'footway', lit: 'yes' })).toBeLessThan(0);
+    expect(edgePenalty({ highway: 'cycleway', lit: 'yes' })).toBeGreaterThanOrEqual(-0.1);
+  });
 });
 
 describe('buildGraph on the Skatås fixture', () => {

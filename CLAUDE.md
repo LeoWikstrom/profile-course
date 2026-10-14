@@ -68,9 +68,14 @@ Score (lower = better) on 25 m samples:
       same-bucket queue for short edges, incremental gain/loss in the partial score),
       Yen's k-shortest-paths local improvement, baseline selectable in the debug panel.
       Perf on a real phone graph still to verify in phase 5 testing.
-- [ ] **Phase 4 – Surface & options**: surface presets, safety penalties from tags,
-      return-to-start, distance override, km range, seed/Try another, shareable URL.
+- [x] **Phase 4 – Surface & options**: surface presets (road/gravel/trail/any), safety
+      penalties/bonuses from tags (sidewalk, maxspeed, cycleway, foot=designated, lit),
+      return-to-start (Dijkstra-pruned), distance override, km range, seed/Try another,
+      shareable URL hash.
+- [ ] **Pre-built area graphs** (prioritised by Leo over Phase 5 — public Overpass servers
+      proved unreliable even at 2 km): download/store an area once, search offline from it.
 - [ ] **Phase 5 – Polish & ship**: error states, cancel, offline, PWA shell, GitHub Pages
-      deploy via Action.
-- [ ] **Phase 6 – Later** (optional): pre-built city graphs, Strava personal heatmap, OSM
-      traces, multiple candidates.
+      deploy via Action. Also wanted: gokartor.se as an alternative map layer (verify tile
+      URL + permission); onthegomap.com is the UX reference.
+- [ ] **Phase 6 – Later** (optional): Strava personal heatmap, OSM traces, multiple
+      candidates, course editing mode (add/delete/move path nodes — gold feature).

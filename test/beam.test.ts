@@ -81,6 +81,43 @@ describe('no in-and-back-again', () => {
   });
 });
 
+describe('return to start', () => {
+  it('beam courses end at the start node', async () => {
+    const target = flatTarget(1000);
+    const results = await beamSearch(graph, startNode, target, 1000, {
+      seed: 1,
+      returnToStart: true,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    for (const c of results) {
+      let node = startNode;
+      for (let i = 0; i < c.path.edges.length; i++) {
+        const e = graph.edges[c.path.edges[i]!]!;
+        node = e.a === node ? e.b : e.a;
+      }
+      expect(node).toBe(startNode);
+    }
+  });
+
+  it('random-walk courses end at the start node', async () => {
+    const target = flatTarget(800);
+    const results = await randomWalkSearch(graph, startNode, target, 800, {
+      seed: 1,
+      walks: 500,
+      returnToStart: true,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    for (const c of results) {
+      let node = startNode;
+      for (const ei of c.path.edges) {
+        const e = graph.edges[ei]!;
+        node = e.a === node ? e.b : e.a;
+      }
+      expect(node).toBe(startNode);
+    }
+  });
+});
+
 describe('improveCandidates', () => {
   it('never worsens the best score', async () => {
     const target = flatTarget(1200);

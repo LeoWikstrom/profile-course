@@ -24,6 +24,30 @@
           <span>Radius: <output id="radius-value">5.0</output> km</span>
           <input type="range" id="radius-slider" min="1" max="10" step="0.5" value="5" />
         </label>
+        <label class="control">
+          <span>Course distance (km)</span>
+          <input type="number" id="distance-input" min="1" max="100" step="0.1" />
+        </label>
+        <div class="control" id="range-control" hidden>
+          <span>Match race from–to (km)</span>
+          <div class="row">
+            <input type="number" id="range-from" min="0" step="0.5" value="0" aria-label="From km" />
+            <input type="number" id="range-to" min="0" step="0.5" aria-label="To km" />
+          </div>
+        </div>
+        <label class="control">
+          <span>Surface</span>
+          <select id="surface-select">
+            <option value="road" selected>Road race (paved/gravel)</option>
+            <option value="gravel">Gravel</option>
+            <option value="trail">Trail</option>
+            <option value="any">Any surface</option>
+          </select>
+        </label>
+        <label class="control checkbox">
+          <input type="checkbox" id="return-toggle" />
+          <span>Return to start</span>
+        </label>
         <button id="find-button" disabled>Find course</button>
         <details id="debug-panel">
           <summary class="hint">Debug</summary>

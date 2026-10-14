@@ -53,6 +53,26 @@ describe('gradientHistogram', () => {
   });
 });
 
+describe('sliceProfile', () => {
+  it('cuts a window and rebases it to its own start', async () => {
+    const { sliceProfile, buildProfileFromSamples } = await import('../src/gpx/profile');
+    const samples = new Float32Array(401); // 10 km
+    for (let i = 0; i < 401; i++) samples[i] = i * 0.5; // steady climb
+    const full = buildProfileFromSamples(samples, 400 * 25);
+    const part = sliceProfile(full, 2000, 7000);
+    expect(part.totalDistance).toBe(5000);
+    expect(part.samples[0]).toBe(0);
+    expect(part.totalGain).toBeCloseTo(100, 0); // 5 km of the 0.5 m / 25 m climb
+  });
+
+  it('clamps out-of-range windows', async () => {
+    const { sliceProfile, buildProfileFromSamples } = await import('../src/gpx/profile');
+    const full = buildProfileFromSamples(new Float32Array(101), 100 * 25);
+    const part = sliceProfile(full, -5000, 99_000);
+    expect(part.totalDistance).toBe(full.totalDistance);
+  });
+});
+
 describe('buildTargetProfile on real races', () => {
   it('goteborgsvarvet is a half marathon with meaningful gain', () => {
     const gpx = parseGpx(readFileSync('test/fixtures/goteborgsvarvet.gpx', 'utf8'));

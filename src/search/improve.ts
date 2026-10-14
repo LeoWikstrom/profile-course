@@ -18,7 +18,7 @@ export interface ImproveOptions {
   windowStepM?: number;
   windowLengthM?: number;
   maxCandidates?: number;
-  desiredMix?: SurfaceMix;
+  desiredMix?: SurfaceMix | null;
   weights?: Weights;
   shouldCancel?: () => boolean;
 }

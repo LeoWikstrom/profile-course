@@ -43,6 +43,8 @@ export type MainToWorker =
       targetLengthMeters: number;
       seed: number;
       algorithm: 'beam' | 'walk';
+      desiredMix: [number, number, number, number] | null;
+      returnToStart: boolean;
     }
   | { type: 'cancel' };
 

@@ -18,6 +18,7 @@ L.Icon.Default.mergeOptions({
 
 export interface MapController {
   getStart(): LatLon | null;
+  setStart(start: LatLon): void;
   setRadius(meters: number): void;
   onStartChange(cb: (start: LatLon) => void): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
@@ -98,6 +99,10 @@ export function createMap(container: string): MapController {
       if (!marker) return null;
       const { lat, lng } = marker.getLatLng();
       return { lat, lon: lng };
+    },
+    setStart(start) {
+      placeStart(L.latLng(start.lat, start.lon));
+      map.setView([start.lat, start.lon], Math.max(map.getZoom(), 13));
     },
     setRadius(meters: number) {
       radiusMeters = meters;

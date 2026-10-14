@@ -117,6 +117,11 @@ function toResult(g: Graph, candidate: WalkCandidate, seed: number): CourseResul
   };
 }
 
+interface SearchOptionsIn {
+  desiredMix: [number, number, number, number] | null;
+  returnToStart: boolean;
+}
+
 async function search(
   start: LatLon,
   radiusMeters: number,
@@ -124,6 +129,7 @@ async function search(
   targetLengthMeters: number,
   seed: number,
   algorithm: 'beam' | 'walk',
+  opts: SearchOptionsIn,
 ): Promise<void> {
   cancelled = false;
   const t0 = performance.now();
@@ -145,6 +151,8 @@ async function search(
     algorithm === 'walk'
       ? await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
           seed,
+          desiredMix: opts.desiredMix,
+          returnToStart: opts.returnToStart,
           onProgress: (done, total, best) => {
             post({
               type: 'progress',
@@ -158,6 +166,8 @@ async function search(
         })
       : await beamSearch(g, startNode, profile, targetLengthMeters, {
           seed,
+          desiredMix: opts.desiredMix,
+          returnToStart: opts.returnToStart,
           onProgress: (bucket, total, best) => {
             post({
               type: 'progress',
@@ -182,6 +192,7 @@ async function search(
   const tSearch = performance.now();
   post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
   const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
+    desiredMix: opts.desiredMix,
     shouldCancel: () => cancelled,
   });
   if (cancelled) return;
@@ -208,14 +219,10 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'search':
-      search(
-        msg.start,
-        msg.radiusMeters,
-        msg.target,
-        msg.targetLengthMeters,
-        msg.seed,
-        msg.algorithm,
-      ).catch(
+      search(msg.start, msg.radiusMeters, msg.target, msg.targetLengthMeters, msg.seed, msg.algorithm, {
+        desiredMix: msg.desiredMix,
+        returnToStart: msg.returnToStart,
+      }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

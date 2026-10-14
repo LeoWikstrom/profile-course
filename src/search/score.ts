@@ -24,9 +24,21 @@ export const DEFAULT_WEIGHTS: Weights = {
   repeat: 10,
 };
 
-/** Desired fraction of distance per surface class [paved, gravel, trail, unknown]. */
+/**
+ * Desired fraction of distance per surface class [paved, gravel, trail, unknown];
+ * null = any surface is fine (no surface term).
+ */
 export type SurfaceMix = [number, number, number, number];
 export const MIX_ROAD: SurfaceMix = [1, 0, 0, 0];
+export const MIX_GRAVEL: SurfaceMix = [0.3, 0.7, 0, 0];
+export const MIX_TRAIL: SurfaceMix = [0, 0.3, 0.7, 0];
+
+export const SURFACE_PRESETS: Record<string, SurfaceMix | null> = {
+  road: MIX_ROAD,
+  gravel: MIX_GRAVEL,
+  trail: MIX_TRAIL,
+  any: null,
+};
 
 export interface CoursePath {
   edges: number[];
@@ -158,7 +170,7 @@ export function surfaceMismatch(actual: SurfaceMix, desired: SurfaceMix): number
 export function scoreCourse(
   course: AssembledCourse,
   target: TargetProfile,
-  desiredMix: SurfaceMix = MIX_ROAD,
+  desiredMix: SurfaceMix | null = MIX_ROAD,
   weights: Weights = DEFAULT_WEIGHTS,
 ): number {
   const n = Math.min(course.samples.length, target.samples.length);
@@ -180,7 +192,7 @@ export function scoreCourse(
     weights.rmse * rmse +
     weights.gainLoss * gainLossErr +
     weights.histogram * histErr +
-    weights.surface * surfaceMismatch(course.surfaceSplit, desiredMix) +
+    weights.surface * (desiredMix ? surfaceMismatch(course.surfaceSplit, desiredMix) : 0) +
     weights.penalty * course.penaltyFraction +
     weights.repeat * course.repeatFraction
   );

@@ -1,4 +1,5 @@
 import type { TargetProfile } from '../gpx/profile';
+import { dijkstra } from '../graph/dijkstra';
 import { otherNode, type Graph } from '../graph/types';
 import {
   assembleCourse,
@@ -32,8 +33,10 @@ export interface RandomWalkOptions {
   walks?: number;
   keepBest?: number;
   lengthTolerance?: number;
-  desiredMix?: SurfaceMix;
+  desiredMix?: SurfaceMix | null;
   weights?: Weights;
+  /** Courses must end back at the start node. */
+  returnToStart?: boolean;
   onProgress?: (done: number, total: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -60,6 +63,7 @@ export async function randomWalkSearch(
     lengthTolerance = 0.03,
     desiredMix = MIX_ROAD,
     weights = DEFAULT_WEIGHTS,
+    returnToStart = false,
     onProgress,
     shouldCancel,
   } = options;
@@ -67,6 +71,7 @@ export async function randomWalkSearch(
   const rng = mulberry32(seed);
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
+  const distBack = returnToStart ? dijkstra(graph, [startNode]).dist : null;
   const best: WalkCandidate[] = [];
 
   const edgeIdx: number[] = [];
@@ -82,7 +87,11 @@ export async function randomWalkSearch(
     let prevEdge = -1;
     let failed = false;
 
-    while (dist < minLen) {
+    while (dist < minLen || (returnToStart && node !== startNode)) {
+      if (dist >= maxLen) {
+        failed = true;
+        break;
+      }
       edgeIdx.length = 0;
       edgeWeight.length = 0;
       const targetDeltaBase = targetElevationAt(target, dist);
@@ -91,6 +100,7 @@ export async function randomWalkSearch(
         if (ei === prevEdge) continue; // no immediate in-and-back
         const e = graph.edges[ei]!;
         if (dist + e.lengthM > maxLen) continue;
+        if (distBack && dist + e.lengthM + distBack[otherNode(e, node)]! > maxLen) continue;
         const elev = e.elev!;
         const forward = e.a === node;
         const edgeDelta = forward ? elev[elev.length - 1]! - elev[0]! : elev[0]! - elev[elev.length - 1]!;
@@ -130,7 +140,13 @@ export async function randomWalkSearch(
       prevEdge = ei;
     }
 
-    if (!failed && dist >= minLen && dist <= maxLen && path.edges.length > 0) {
+    if (
+      !failed &&
+      dist >= minLen &&
+      dist <= maxLen &&
+      path.edges.length > 0 &&
+      (!returnToStart || node === startNode)
+    ) {
       const course = assembleCourse(graph, path);
       const score = scoreCourse(course, target, desiredMix, weights);
       if (best.length < keepBest || score < best[best.length - 1]!.score) {

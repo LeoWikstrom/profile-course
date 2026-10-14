@@ -1,5 +1,6 @@
-import { buildTargetProfile, type TargetProfile } from './gpx/profile';
+import { buildTargetProfile, sliceProfile, type TargetProfile } from './gpx/profile';
 import { parseGpx, type ParsedGpx } from './gpx/parse';
+import { SURFACE_PRESETS } from './search/score';
 import type { MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderProfileChart } from './ui/profileChart';
@@ -22,34 +23,89 @@ const gpxStats = document.getElementById('gpx-stats') as HTMLParagraphElement;
 const targetChart = document.getElementById('target-chart') as HTMLDivElement;
 const results = document.getElementById('results') as HTMLElement;
 const algorithmSelect = document.getElementById('algorithm-select') as HTMLSelectElement;
+const distanceInput = document.getElementById('distance-input') as HTMLInputElement;
+const rangeControl = document.getElementById('range-control') as HTMLDivElement;
+const rangeFrom = document.getElementById('range-from') as HTMLInputElement;
+const rangeTo = document.getElementById('range-to') as HTMLInputElement;
+const surfaceSelect = document.getElementById('surface-select') as HTMLSelectElement;
+const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
 
-let targetProfile: TargetProfile | null = null;
+let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
 let seed = 1;
 let searching = false;
 
+/** The profile actually searched for: the race window, rebased. */
+function activeProfile(): TargetProfile | null {
+  if (!fullProfile) return null;
+  const fromM = Math.max(0, Number(rangeFrom.value) * 1000 || 0);
+  const toM = Math.min(fullProfile.totalDistance, Number(rangeTo.value) * 1000 || fullProfile.totalDistance);
+  if (fromM <= 0 && toM >= fullProfile.totalDistance) return fullProfile;
+  if (toM - fromM < 500) return fullProfile;
+  return sliceProfile(fullProfile, fromM, toM);
+}
+
+function readUrlState(): void {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const lat = Number(params.get('lat'));
+  const lon = Number(params.get('lon'));
+  if (Number.isFinite(lat) && Number.isFinite(lon) && params.has('lat')) {
+    map.setStart({ lat, lon });
+  }
+  if (params.has('r')) radiusSlider.value = params.get('r')!;
+  if (params.has('d')) distanceInput.value = params.get('d')!;
+  if (params.has('from')) rangeFrom.value = params.get('from')!;
+  if (params.has('to')) rangeTo.value = params.get('to')!;
+  if (params.has('mix')) surfaceSelect.value = params.get('mix')!;
+  if (params.has('seed')) seed = Number(params.get('seed')) || 1;
+  returnToggle.checked = params.get('rts') === '1';
+  radiusSlider.dispatchEvent(new Event('input'));
+}
+
+function writeUrlState(): void {
+  const start = map.getStart();
+  if (!start) return;
+  const params = new URLSearchParams({
+    lat: start.lat.toFixed(5),
+    lon: start.lon.toFixed(5),
+    r: radiusSlider.value,
+    mix: surfaceSelect.value,
+    seed: String(seed),
+  });
+  if (distanceInput.value) params.set('d', distanceInput.value);
+  if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
+  if (rangeTo.value) params.set('to', rangeTo.value);
+  if (returnToggle.checked) params.set('rts', '1');
+  history.replaceState(null, '', `#${params.toString()}`);
+}
+
 function startSearch(): void {
   const start = map.getStart();
-  if (!start || !targetProfile) return;
+  const profile = activeProfile();
+  if (!start || !profile) return;
   searching = true;
   results.hidden = true;
   map.clearCourse();
   findButton.disabled = true;
   findButton.textContent = 'Working…';
+  writeUrlState();
+  const targetLength = Number(distanceInput.value) * 1000 || profile.totalDistance;
   send({
     type: 'search',
     start,
     radiusMeters: Number(radiusSlider.value) * 1000,
     target: {
-      totalDistance: targetProfile.totalDistance,
-      samples: targetProfile.samples,
-      totalGain: targetProfile.totalGain,
-      totalLoss: targetProfile.totalLoss,
-      gradientHistogram: targetProfile.gradientHistogram,
+      totalDistance: profile.totalDistance,
+      samples: profile.samples,
+      totalGain: profile.totalGain,
+      totalLoss: profile.totalLoss,
+      gradientHistogram: profile.gradientHistogram,
     },
-    targetLengthMeters: targetProfile.totalDistance,
+    targetLengthMeters: targetLength,
     seed,
     algorithm: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
+    desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
+    returnToStart: returnToggle.checked,
   });
 }
 
@@ -69,7 +125,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (!pendingGpx) break;
       const points = pendingGpx.points.map((p, i) => ({ ...p, ele: msg.elevations[i]! }));
       pendingGpx = null;
-      setTargetProfile(buildTargetProfile(points));
+      setFullProfile(buildTargetProfile(points));
       break;
     }
     case 'prepared':
@@ -88,16 +144,18 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'bestSoFar':
       map.drawCourse(msg.segments, { faded: true });
       break;
-    case 'result':
+    case 'result': {
       map.drawCourse(msg.course.segments);
-      if (targetProfile) {
-        renderResult(results, msg.course, targetProfile, () => {
+      const profile = activeProfile();
+      if (profile) {
+        renderResult(results, msg.course, profile, () => {
           seed += 1;
           startSearch();
         });
       }
       searchDone();
       break;
+    }
     case 'noCourse':
       startHint.textContent = msg.message;
       map.clearCourse();
@@ -112,13 +170,31 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
 };
 send({ type: 'ping' });
 
-function setTargetProfile(profile: TargetProfile): void {
-  targetProfile = profile;
+function setFullProfile(profile: TargetProfile): void {
+  fullProfile = profile;
   gpxStats.hidden = false;
   gpxStats.textContent = `${(profile.totalDistance / 1000).toFixed(1)} km, +${Math.round(profile.totalGain)} m / \u2212${Math.round(profile.totalLoss)} m`;
   renderProfileChart(targetChart, [{ samples: profile.samples, color: '#2563eb' }]);
+  rangeControl.hidden = false;
+  const totalKm = profile.totalDistance / 1000;
+  rangeTo.max = totalKm.toFixed(1);
+  rangeFrom.max = rangeTo.max;
+  if (!rangeTo.value || Number(rangeTo.value) > totalKm) rangeTo.value = totalKm.toFixed(1);
+  if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
   updateFindEnabled();
 }
+
+function refreshTargetChart(): void {
+  const profile = activeProfile();
+  if (!profile) return;
+  renderProfileChart(targetChart, [{ samples: profile.samples, color: '#2563eb' }]);
+  if (profile !== fullProfile) {
+    distanceInput.value = (profile.totalDistance / 1000).toFixed(1);
+  }
+}
+
+rangeFrom.addEventListener('change', refreshTargetChart);
+rangeTo.addEventListener('change', refreshTargetChart);
 
 gpxInput.addEventListener('change', async () => {
   const file = gpxInput.files?.[0];
@@ -126,7 +202,7 @@ gpxInput.addEventListener('change', async () => {
   try {
     const gpx = parseGpx(await file.text());
     if (gpx.hasElevation) {
-      setTargetProfile(buildTargetProfile(gpx.points));
+      setFullProfile(buildTargetProfile(gpx.points));
     } else {
       gpxStats.hidden = false;
       gpxStats.textContent = 'No elevation in GPX; fetching from terrain model…';
@@ -138,7 +214,7 @@ gpxInput.addEventListener('change', async () => {
   } catch (err) {
     gpxStats.hidden = false;
     gpxStats.textContent = err instanceof Error ? err.message : String(err);
-    targetProfile = null;
+    fullProfile = null;
     updateFindEnabled();
   }
 });
@@ -156,7 +232,12 @@ map.onStartChange((start) => {
 
 function updateFindEnabled(): void {
   if (searching) return;
-  findButton.disabled = !(targetProfile !== null && map.getStart() !== null);
+  findButton.disabled = !(fullProfile !== null && map.getStart() !== null);
 }
 
-findButton.addEventListener('click', startSearch);
+findButton.addEventListener('click', () => {
+  seed = 1;
+  startSearch();
+});
+
+readUrlState();

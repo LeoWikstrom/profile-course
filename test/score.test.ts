@@ -105,4 +105,13 @@ describe('surfaceMismatch', () => {
     const pavedOnTrail = surfaceMismatch([1, 0, 0, 0], [0, 0, 1, 0]);
     expect(gravelOnTrail).toBeLessThan(pavedOnTrail);
   });
+
+  it('a null mix ("any") disables the surface term', () => {
+    const target = buildProfileFromSamples(triangle(801, 100), 800 * 25);
+    const trail = {
+      ...courseFrom(triangle(801, 100)),
+      surfaceSplit: [0, 0, 1, 0] as [number, number, number, number],
+    };
+    expect(scoreCourse(trail, target, null)).toBeCloseTo(0, 5);
+  });
 });
