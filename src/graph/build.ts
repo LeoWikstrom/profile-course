@@ -90,6 +90,11 @@ export function buildGraph(response: OverpassResponse): Graph {
   const edges: GraphEdge[] = [];
   for (const way of ways) {
     const tags = way.tags ?? {};
+    // Driveways and parking aisles only add noise and in-and-back detours.
+    const service = tags['service'];
+    if (tags['highway'] === 'service' && (service === 'driveway' || service === 'parking_aisle')) {
+      continue;
+    }
     const surface = classifySurface(tags);
     const penalty = edgePenalty(tags);
     let segStart = 0;

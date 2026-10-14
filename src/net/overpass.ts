@@ -21,23 +21,19 @@ export interface OverpassResponse {
 
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
 const RUNNABLE_HIGHWAYS =
-  'footway|path|track|cycleway|residential|living_street|unclassified|tertiary|pedestrian|steps|bridleway';
+  'footway|path|track|cycleway|residential|living_street|unclassified|tertiary|service|pedestrian|steps|bridleway';
 
+// Driveways and parking aisles are filtered client-side in buildGraph; a
+// single query clause keeps the server-side cost down.
 export function buildQuery(center: LatLon, radiusMeters: number): string {
   const around = `(around:${Math.round(radiusMeters)},${center.lat.toFixed(6)},${center.lon.toFixed(6)})`;
-  const common = '[access!~"private|no"][foot!=no]';
-  // service ways are kept except driveways and parking aisles, which only add
-  // noise and in-and-back detours.
-  return (
-    `[out:json][timeout:180];(` +
-    `way[highway~"^(${RUNNABLE_HIGHWAYS})$"]${common}${around};` +
-    `way[highway=service][service!~"^(driveway|parking_aisle)$"]${common}${around};` +
-    `);out body;>;out skel qt;`
-  );
+  return `[out:json][timeout:180];(way[highway~"^(${RUNNABLE_HIGHWAYS})$"][access!~"private|no"][foot!=no]${around};);out body;>;out skel qt;`;
 }
 
 function cacheKey(center: LatLon, radiusMeters: number): string {
@@ -87,27 +83,37 @@ export async function fetchNetwork(
 
   const query = buildQuery(center, radiusMeters);
   let lastError: unknown = null;
-  for (let i = 0; i < ENDPOINTS.length; i++) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 180_000);
-      const res = await fetchFn(ENDPOINTS[i]!, {
-        method: 'POST',
-        body: `data=${encodeURIComponent(query)}`,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: controller.signal,
-      });
-      if (!res.ok) {
+  // The public servers reject or hang individually and intermittently (quick
+  // 504s under load, dead mirrors), so fail fast per endpoint and make two
+  // rounds over all of them before giving up.
+  for (let round = 0; round < 2; round++) {
+    for (let i = 0; i < ENDPOINTS.length; i++) {
+      try {
+        const controller = new AbortController();
+        // Fast-fail if no response headers arrive; dead mirrors otherwise
+        // stall the whole search.
+        let timer = setTimeout(() => controller.abort(), 25_000);
+        const res = await fetchFn(ENDPOINTS[i]!, {
+          method: 'POST',
+          body: `data=${encodeURIComponent(query)}`,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: controller.signal,
+        });
         clearTimeout(timer);
-        throw new Error(`Overpass ${ENDPOINTS[i]} returned ${res.status}`);
+        if (!res.ok) throw new Error(`Overpass ${ENDPOINTS[i]} returned ${res.status}`);
+        timer = setTimeout(() => controller.abort(), 180_000);
+        const json = await readWithProgress(res, options.onBytes, i);
+        clearTimeout(timer);
+        if (!Array.isArray(json.elements)) {
+          throw new Error(`Overpass ${ENDPOINTS[i]} returned no elements`);
+        }
+        await cacheSet(key, json);
+        return json;
+      } catch (err) {
+        lastError = err;
       }
-      const json = await readWithProgress(res, options.onBytes, i);
-      clearTimeout(timer);
-      await cacheSet(key, json);
-      return json;
-    } catch (err) {
-      lastError = err;
     }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error(`All Overpass endpoints failed: ${String(lastError)}`);
+  throw new Error(`All Overpass endpoints failed twice: ${String(lastError)}`);
 }
