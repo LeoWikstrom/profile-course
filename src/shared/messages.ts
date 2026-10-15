@@ -61,6 +61,8 @@ export type MainToWorker =
       returnToStart: boolean;
       /** Course must begin at the marker; otherwise anywhere inside the zone. */
       startAtPoint: boolean;
+      /** Overrides merged over DEFAULT_WEIGHTS (advanced settings). */
+      weights: Record<string, number> | null;
     }
   | { type: 'cancel' };
 

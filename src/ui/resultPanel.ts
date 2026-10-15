@@ -3,32 +3,34 @@ import type { CourseResult } from '../shared/messages';
 
 const SURFACE_NAMES = ['paved', 'gravel', 'trail', 'unknown'];
 
+export interface ResultElements {
+  stats: HTMLElement;
+  actions: HTMLElement;
+  downloadButton: HTMLButtonElement;
+}
+
+export function hideResult(els: ResultElements): void {
+  els.stats.hidden = true;
+  els.actions.hidden = true;
+  els.downloadButton.hidden = true;
+}
+
 export function renderResult(
-  container: HTMLElement,
+  els: ResultElements,
   course: CourseResult,
   onTryAnother: () => void,
 ): void {
-  container.hidden = false;
-  container.textContent = '';
-
-  const heading = document.createElement('h2');
-  heading.textContent = 'Proposed course';
-  container.appendChild(heading);
-
-  const stats = document.createElement('p');
-  stats.className = 'hint';
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
     .filter((s) => s !== null)
     .join(', ');
-  stats.textContent =
+  els.stats.hidden = false;
+  els.stats.textContent =
     `${(course.lengthM / 1000).toFixed(2)} km, +${Math.round(course.gain)} m / ` +
     `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} (lower is better) \u00b7 ${split}`;
-  container.appendChild(stats);
 
-  const download = document.createElement('button');
-  download.textContent = 'Download GPX';
-  download.addEventListener('click', () => {
+  els.downloadButton.hidden = false;
+  els.downloadButton.onclick = () => {
     const gpx = buildGpx(
       `Profile course ${(course.lengthM / 1000).toFixed(1)} km`,
       `Match score ${course.score.toFixed(2)} (seed ${course.seed})`,
@@ -40,18 +42,17 @@ export function renderResult(
     a.download = 'profile-course.gpx';
     a.click();
     URL.revokeObjectURL(url);
-  });
-  container.appendChild(download);
+  };
 
+  els.actions.hidden = false;
+  els.actions.textContent = '';
   const tryAnother = document.createElement('button');
   tryAnother.textContent = `Try another (seed ${course.seed + 1})`;
-  tryAnother.style.marginTop = '8px';
   tryAnother.addEventListener('click', onTryAnother);
-  container.appendChild(tryAnother);
+  els.actions.appendChild(tryAnother);
 
   const copyLink = document.createElement('button');
   copyLink.textContent = 'Copy link';
-  copyLink.style.marginTop = '8px';
   copyLink.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(location.href);
@@ -61,5 +62,5 @@ export function renderResult(
       copyLink.textContent = location.href;
     }
   });
-  container.appendChild(copyLink);
+  els.actions.appendChild(copyLink);
 }

@@ -14,6 +14,7 @@
     <div id="map"></div>
     <div id="sheet">
       <div id="sheet-handle" role="button" aria-label="Show or hide the panel" tabindex="0"></div>
+      <button id="download-gpx" hidden title="Download GPX">GPX ⤓</button>
       <section id="controls">
         <h1>Profile Course</h1>
         <label class="control">
@@ -22,6 +23,8 @@
         </label>
         <p class="hint" id="gpx-stats" hidden></p>
         <div id="target-chart"></div>
+        <p class="hint" id="course-stats" hidden></p>
+        <div id="course-actions" class="row" hidden></div>
         <p class="hint" id="start-hint">Tap the map to set a start point.</p>
         <label class="control">
           <span>Start/finish zone: <output id="radius-value">5.0</output> km (course may leave it)</span>
@@ -77,8 +80,37 @@
           <ul id="areas-list" class="hint"></ul>
           <p class="hint" id="storage-info"></p>
         </details>
-        <details id="debug-panel">
-          <summary class="hint">Debug</summary>
+        <details id="advanced-panel">
+          <summary class="hint">Advanced settings</summary>
+          <p class="hint">Weights: how much each factor matters (0 = ignore).</p>
+          <div class="row">
+            <label class="control"><span>Local shape</span>
+              <input type="number" id="w-localShape" value="6" min="0" step="0.5" /></label>
+            <label class="control"><span>Total gain/loss</span>
+              <input type="number" id="w-gainLoss" value="8" min="0" step="1" /></label>
+          </div>
+          <div class="row">
+            <label class="control"><span>Turns</span>
+              <input type="number" id="w-turns" value="2" min="0" step="0.5" /></label>
+            <label class="control"><span>Surface</span>
+              <input type="number" id="w-surface" value="15" min="0" step="1" /></label>
+          </div>
+          <div class="row">
+            <label class="control"><span>Safety</span>
+              <input type="number" id="w-penalty" value="30" min="0" step="5" /></label>
+            <label class="control"><span>Repeats</span>
+              <input type="number" id="w-oscillation" value="80" min="0" step="10" /></label>
+          </div>
+          <label class="control"><span>Seed</span>
+            <input type="number" id="seed-input" value="1" min="1" step="1" /></label>
+          <div class="control">
+            <span>Start coordinates</span>
+            <div class="row">
+              <input type="number" id="coord-lat" step="0.00001" placeholder="lat" aria-label="Latitude" />
+              <input type="number" id="coord-lon" step="0.00001" placeholder="lon" aria-label="Longitude" />
+            </div>
+            <button id="coord-set" style="margin-top: 6px">Set marker</button>
+          </div>
           <label class="control">
             <span>Algorithm</span>
             <select id="algorithm-select">
@@ -88,7 +120,6 @@
           </label>
         </details>
       </section>
-      <section id="results" hidden></section>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

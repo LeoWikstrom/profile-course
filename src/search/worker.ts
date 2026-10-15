@@ -23,7 +23,7 @@ import type {
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
-import type { CoursePath } from './score';
+import { DEFAULT_WEIGHTS, type CoursePath } from './score';
 
 function post(msg: WorkerToMain): void {
   postMessage(msg);
@@ -184,6 +184,7 @@ interface SearchOptionsIn {
   desiredMix: [number, number, number, number] | null;
   returnToStart: boolean;
   startAtPoint: boolean;
+  weights: Record<string, number> | null;
 }
 
 async function search(
@@ -210,6 +211,8 @@ async function search(
     for (let i = 0; i < validEnd.length; i++) if (validEnd[i]) startNodes.push(i);
   }
 
+  const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights ?? {}) };
+
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
   let lastBestScore = Infinity;
   const streamBest = (best: { path: CoursePath; score: number } | null) => {
@@ -225,6 +228,7 @@ async function search(
           seed,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
+          weights,
           validEnd,
           startNodes,
           onProgress: (done, total, best) => {
@@ -242,6 +246,7 @@ async function search(
           seed,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
+          weights,
           validEnd,
           startNodes,
           onProgress: (bucket, total, best) => {
@@ -269,6 +274,7 @@ async function search(
   post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
   const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
     desiredMix: opts.desiredMix,
+    weights,
     shouldCancel: () => cancelled,
   });
   if (cancelled) return;
@@ -299,6 +305,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         desiredMix: msg.desiredMix,
         returnToStart: msg.returnToStart,
         startAtPoint: msg.startAtPoint,
+        weights: msg.weights,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),

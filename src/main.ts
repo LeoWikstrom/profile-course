@@ -5,7 +5,7 @@ import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderInteractiveChart, renderProfileChart } from './ui/profileChart';
-import { renderResult } from './ui/resultPanel';
+import { hideResult, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
 import SearchWorker from './search/worker?worker';
 
@@ -28,8 +28,30 @@ const startHint = document.getElementById('start-hint') as HTMLParagraphElement;
 const gpxInput = document.getElementById('gpx-input') as HTMLInputElement;
 const gpxStats = document.getElementById('gpx-stats') as HTMLParagraphElement;
 const targetChart = document.getElementById('target-chart') as HTMLDivElement;
-const results = document.getElementById('results') as HTMLElement;
 const algorithmSelect = document.getElementById('algorithm-select') as HTMLSelectElement;
+const resultEls: ResultElements = {
+  stats: document.getElementById('course-stats') as HTMLElement,
+  actions: document.getElementById('course-actions') as HTMLElement,
+  downloadButton: document.getElementById('download-gpx') as HTMLButtonElement,
+};
+const seedInput = document.getElementById('seed-input') as HTMLInputElement;
+const coordLat = document.getElementById('coord-lat') as HTMLInputElement;
+const coordLon = document.getElementById('coord-lon') as HTMLInputElement;
+const coordSet = document.getElementById('coord-set') as HTMLButtonElement;
+const WEIGHT_FIELDS = ['localShape', 'gainLoss', 'turns', 'surface', 'penalty', 'oscillation'];
+
+function collectWeights(): Record<string, number> | null {
+  const out: Record<string, number> = {};
+  for (const f of WEIGHT_FIELDS) {
+    const el = document.getElementById(`w-${f}`) as HTMLInputElement;
+    const v = Number(el.value);
+    if (Number.isFinite(v)) out[f] = v;
+  }
+  // Dense turns and far repeats scale with their main sliders.
+  if (out['turns'] !== undefined) out['denseTurns'] = out['turns'];
+  if (out['oscillation'] !== undefined) out['repeat'] = out['oscillation'] / 8;
+  return out;
+}
 const distanceInput = document.getElementById('distance-input') as HTMLInputElement;
 const rangeControl = document.getElementById('range-control') as HTMLDivElement;
 const rangeFrom = document.getElementById('range-from') as HTMLInputElement;
@@ -78,8 +100,9 @@ function showResult(result: { course: CourseResult; profile: TargetProfile }): v
     if (i === null) map.hideCoursePoint();
     else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
   });
-  renderResult(results, result.course, () => {
+  renderResult(resultEls, result.course, () => {
     seed += 1;
+    seedInput.value = String(seed);
     startSearch();
   });
 }
@@ -135,7 +158,7 @@ function startSearch(): void {
   const profile = activeProfile();
   if (!start || !profile) return;
   searching = true;
-  results.hidden = true;
+  hideResult(resultEls);
   map.clearCourse();
   map.hideCoursePoint();
   refreshTargetChart(); // back to the target-only chart while searching
@@ -163,6 +186,7 @@ function startSearch(): void {
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     returnToStart: returnToggle.checked,
     startAtPoint: startAtPointToggle.checked || returnToggle.checked,
+    weights: collectWeights(),
   });
 }
 
@@ -352,6 +376,8 @@ radiusSlider.addEventListener('input', () => {
 
 map.onStartChange((start) => {
   startHint.textContent = `Start: ${start.lat.toFixed(5)}, ${start.lon.toFixed(5)} (drag to adjust)`;
+  coordLat.value = start.lat.toFixed(5);
+  coordLon.value = start.lon.toFixed(5);
   downloadAreaButton.disabled = false;
   updateFindEnabled();
   persistSession();
@@ -375,8 +401,16 @@ function updateFindEnabled(): void {
 }
 
 findButton.addEventListener('click', () => {
-  seed = 1;
+  seed = Math.max(1, Math.round(Number(seedInput.value)) || 1);
   startSearch();
+});
+
+coordSet.addEventListener('click', () => {
+  const lat = Number(coordLat.value);
+  const lon = Number(coordLon.value);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && lat !== 0 && lon !== 0) {
+    map.setStart({ lat, lon });
+  }
 });
 
 async function boot(): Promise<void> {

@@ -14,7 +14,7 @@ import {
   type SurfaceMix,
   type Weights,
 } from './score';
-import type { WalkCandidate } from './randomWalk';
+import { mulberry32, type WalkCandidate } from './randomWalk';
 
 export interface BeamOptions {
   /** Perturbs beam tie-breaking so "Try another" explores different courses. */
@@ -237,7 +237,17 @@ export async function beamSearch(
 
   // Multi-start: one root state per allowed start node. The offset-corrected
   // RMSE makes a shared elev0 reference safe across different start points.
-  const roots = returnToStart || !startNodes || startNodes.length === 0 ? [startNode] : startNodes;
+  // Roots all rank 0, so without a shuffle the beam would keep the first ~B
+  // in node-index order — a geographic cluster, not a spread.
+  let roots = returnToStart || !startNodes || startNodes.length === 0 ? [startNode] : startNodes;
+  if (roots.length > 1) {
+    const rng = mulberry32(seed * 7919 + 1);
+    roots = [...roots];
+    for (let i = roots.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [roots[i], roots[j]] = [roots[j]!, roots[i]!];
+    }
+  }
   const s: StateStore = {
     node: [...roots],
     dist: roots.map(() => 0),
