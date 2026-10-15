@@ -1,7 +1,8 @@
 import { buildTargetProfile, sliceProfile, type TargetProfile } from './gpx/profile';
 import { parseGpx, type ParsedGpx } from './gpx/parse';
 import { SURFACE_PRESETS } from './search/score';
-import type { MainToWorker, WorkerToMain } from './shared/messages';
+import { loadSession, requestPersistentStorage, saveSession } from './session';
+import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderProfileChart } from './ui/profileChart';
 import { renderResult } from './ui/resultPanel';
@@ -39,6 +40,45 @@ let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
 let seed = 1;
 let searching = false;
+let gpxLabel: string | null = null;
+let lastResult: { course: CourseResult; profile: TargetProfile } | null = null;
+
+function persistSession(): void {
+  saveSession({
+    profile: fullProfile,
+    gpxLabel,
+    settings: {
+      start: map.getStart(),
+      radiusKm: radiusSlider.value,
+      distanceKm: distanceInput.value,
+      rangeFromKm: rangeFrom.value,
+      rangeToKm: rangeTo.value,
+      surface: surfaceSelect.value,
+      returnToStart: returnToggle.checked,
+      seed,
+    },
+    result: lastResult,
+  });
+}
+
+function showResult(result: { course: CourseResult; profile: TargetProfile }): void {
+  map.drawCourse(result.course.segments);
+  map.decorateCourse(result.course.exportPoints);
+  const points = result.course.exportPoints;
+  renderResult(
+    results,
+    result.course,
+    result.profile,
+    () => {
+      seed += 1;
+      startSearch();
+    },
+    (i) => {
+      if (i === null) map.hideCoursePoint();
+      else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
+    },
+  );
+}
 
 /** The profile actually searched for: the race window, rebased. */
 function activeProfile(): TargetProfile | null {
@@ -179,24 +219,11 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       map.drawCourse(msg.segments, { faded: true });
       break;
     case 'result': {
-      map.drawCourse(msg.course.segments);
-      map.decorateCourse(msg.course.exportPoints);
       const profile = activeProfile();
       if (profile) {
-        const points = msg.course.exportPoints;
-        renderResult(
-          results,
-          msg.course,
-          profile,
-          () => {
-            seed += 1;
-            startSearch();
-          },
-          (i) => {
-            if (i === null) map.hideCoursePoint();
-            else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
-          },
-        );
+        lastResult = { course: msg.course, profile };
+        showResult(lastResult);
+        persistSession();
       }
       searchDone();
       break;
@@ -230,7 +257,8 @@ downloadAreaButton.addEventListener('click', () => {
 function setFullProfile(profile: TargetProfile): void {
   fullProfile = profile;
   gpxStats.hidden = false;
-  gpxStats.textContent = `${(profile.totalDistance / 1000).toFixed(1)} km, +${Math.round(profile.totalGain)} m / \u2212${Math.round(profile.totalLoss)} m`;
+  const label = gpxLabel ? `${gpxLabel}: ` : '';
+  gpxStats.textContent = `${label}${(profile.totalDistance / 1000).toFixed(1)} km, +${Math.round(profile.totalGain)} m / \u2212${Math.round(profile.totalLoss)} m`;
   renderProfileChart(targetChart, [{ samples: profile.samples, color: '#2563eb' }]);
   rangeControl.hidden = false;
   const totalKm = profile.totalDistance / 1000;
@@ -241,6 +269,7 @@ function setFullProfile(profile: TargetProfile): void {
   if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
   updateRangeLabel();
   updateFindEnabled();
+  persistSession();
 }
 
 function updateRangeLabel(): void {
@@ -277,6 +306,8 @@ gpxInput.addEventListener('change', async () => {
   if (!file) return;
   try {
     const gpx = parseGpx(await file.text());
+    gpxLabel = gpx.name ?? file.name;
+    lastResult = null;
     if (gpx.hasElevation) {
       setFullProfile(buildTargetProfile(gpx.points));
     } else {
@@ -305,7 +336,12 @@ map.onStartChange((start) => {
   startHint.textContent = `Start: ${start.lat.toFixed(5)}, ${start.lon.toFixed(5)} (drag to adjust)`;
   downloadAreaButton.disabled = false;
   updateFindEnabled();
+  persistSession();
 });
+
+for (const el of [surfaceSelect, returnToggle, distanceInput, rangeFrom, rangeTo, radiusSlider]) {
+  el.addEventListener('change', persistSession);
+}
 
 function updateFindEnabled(): void {
   if (searching) return;
@@ -317,4 +353,30 @@ findButton.addEventListener('click', () => {
   startSearch();
 });
 
-readUrlState();
+async function boot(): Promise<void> {
+  const session = await loadSession();
+  if (session) {
+    gpxLabel = session.gpxLabel;
+    seed = session.settings.seed || 1;
+    if (session.settings.radiusKm) radiusSlider.value = session.settings.radiusKm;
+    if (session.settings.distanceKm) distanceInput.value = session.settings.distanceKm;
+    if (session.settings.rangeFromKm) rangeFrom.value = session.settings.rangeFromKm;
+    if (session.settings.rangeToKm) rangeTo.value = session.settings.rangeToKm;
+    if (session.settings.surface) surfaceSelect.value = session.settings.surface;
+    returnToggle.checked = session.settings.returnToStart;
+    if (session.profile) setFullProfile(session.profile);
+    if (session.settings.start) map.setStart(session.settings.start);
+    radiusSlider.dispatchEvent(new Event('input'));
+    if (session.result) {
+      lastResult = session.result;
+      showResult(session.result);
+    }
+  }
+  // Explicit URL parameters win over the restored session.
+  readUrlState();
+
+  const storageInfo = document.getElementById('storage-info') as HTMLParagraphElement;
+  storageInfo.textContent = await requestPersistentStorage();
+}
+
+void boot();
