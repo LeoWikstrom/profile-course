@@ -275,12 +275,14 @@ export async function beamSearch(
     const bucket = buckets[b]!;
     if (bucket.length === 0) continue;
 
-    // Seeded jitter breaks ties between near-equal states, so a new seed
-    // ("Try another") explores a different part of the search space.
-    const jitter = (i: number) => (((i * 2654435761 + seed * 97) >>> 0) % 1000) * 1e-7;
+    // Seeded multiplicative noise (up to 5 %) on the pruning rank, so a new
+    // seed ("Try another") explores genuinely different courses. Tie-break
+    // jitter alone changed nothing once the ranking got strong.
+    const noise = (i: number) =>
+      1 + 0.05 * ((((i * 2654435761 + seed * 2246822519) >>> 0) % 1024) / 1024);
     bucket.sort(
       (x, y) =>
-        partialRank(s, x, weights, tp) + jitter(x) - partialRank(s, y, weights, tp) - jitter(y),
+        partialRank(s, x, weights, tp) * noise(x) - partialRank(s, y, weights, tp) * noise(y),
     );
     // Cap states per end node, or the beam fills with near-identical prefixes
     // of the single best path and loses diversity. Small graphs have few

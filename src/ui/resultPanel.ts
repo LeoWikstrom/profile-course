@@ -23,7 +23,7 @@ export function renderResult(
     .join(', ');
   stats.textContent =
     `${(course.lengthM / 1000).toFixed(2)} km, +${Math.round(course.gain)} m / ` +
-    `\u2212${Math.round(course.loss)} m \u00b7 score ${course.score.toFixed(1)} \u00b7 ${split}`;
+    `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} (lower is better) \u00b7 ${split}`;
   container.appendChild(stats);
 
   const download = document.createElement('button');
