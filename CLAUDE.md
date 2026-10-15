@@ -79,8 +79,10 @@ Score (lower = better) on 25 m samples:
       shareable URL hash.
 - [ ] **Pre-built area graphs** (prioritised by Leo over Phase 5 — public Overpass servers
       proved unreliable even at 2 km): download/store an area once, search offline from it.
-- [ ] **Phase 5 – Polish & ship**: error states, cancel, offline, PWA shell, GitHub Pages
-      deploy via Action. Also wanted: gokartor.se as an alternative map layer (verify tile
-      URL + permission); onthegomap.com is the UX reference.
+- [x] **Phase 5 (minus deploy)**: cancel button, offline-aware errors, PWA shell (manifest,
+      icon, network-first/cache-first service worker, registered in prod builds only),
+      gokartor.se layer switcher (`https://kartor.gokartor.se/Master/{z}/{y}/{x}.png` —
+      note y/x order; usage terms not published, personal use). Deploy explicitly deferred
+      by Leo.
 - [ ] **Phase 6 – Later** (optional): Strava personal heatmap, OSM traces, multiple
       candidates, course editing mode (add/delete/move path nodes — gold feature).

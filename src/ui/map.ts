@@ -36,10 +36,19 @@ export function createMap(container: string): MapController {
   const map = L.map(container, { zoomControl: false }).setView([57.7089, 11.9746], 12);
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
+  // Note the {y}/{x} order; verified against kartor.gokartor.se 2026-10-15.
+  const gokartor = L.tileLayer('https://kartor.gokartor.se/Master/{z}/{y}/{x}.png', {
+    maxZoom: 19,
+    maxNativeZoom: 17,
+    attribution: '&copy; <a href="https://gokartor.se">Gokartor</a>',
+  });
+  L.control
+    .layers({ OpenStreetMap: osm, 'GoKartor (SE)': gokartor }, {}, { position: 'topright' })
+    .addTo(map);
 
   let marker: L.Marker | null = null;
   let circle: L.Circle | null = null;

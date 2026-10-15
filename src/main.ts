@@ -23,6 +23,7 @@ function send(msg: MainToWorker): void {
 const radiusSlider = document.getElementById('radius-slider') as HTMLInputElement;
 const radiusValue = document.getElementById('radius-value') as HTMLOutputElement;
 const findButton = document.getElementById('find-button') as HTMLButtonElement;
+const cancelButton = document.getElementById('cancel-button') as HTMLButtonElement;
 const startHint = document.getElementById('start-hint') as HTMLParagraphElement;
 const gpxInput = document.getElementById('gpx-input') as HTMLInputElement;
 const gpxStats = document.getElementById('gpx-stats') as HTMLParagraphElement;
@@ -136,6 +137,8 @@ function startSearch(): void {
   refreshTargetChart(); // back to the target-only chart while searching
   findButton.disabled = true;
   findButton.textContent = 'Working…';
+  cancelButton.hidden = false;
+  cancelButton.style.marginTop = '8px';
   writeUrlState();
   const targetLength = Number(distanceInput.value) * 1000 || profile.totalDistance;
   send({
@@ -161,8 +164,15 @@ function startSearch(): void {
 function searchDone(): void {
   searching = false;
   findButton.textContent = 'Find course';
+  cancelButton.hidden = true;
   updateFindEnabled();
 }
+
+cancelButton.addEventListener('click', () => {
+  send({ type: 'cancel' });
+  startHint.textContent = 'Search cancelled.';
+  searchDone();
+});
 
 function renderAreas(areas: import('./shared/messages').AreaInfo[]): void {
   areasList.textContent = '';
@@ -383,3 +393,7 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('sw:', err));
+}

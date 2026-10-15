@@ -90,9 +90,22 @@ async function ensurePrepared(
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
-  const { response, source } = await getNetwork(start, graphRadius, {
-    onBytes: bytesProgress('fetching network', 0.05),
-  });
+  let result;
+  try {
+    result = await getNetwork(start, graphRadius, {
+      onBytes: bytesProgress('fetching network', 0.05),
+    });
+  } catch (err) {
+    if (!navigator.onLine) {
+      throw new Error(
+        'You are offline and no downloaded area covers this search. ' +
+          'Download an offline area first, or reconnect.',
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+  const { response, source } = result;
   if (source === 'offline-area') {
     post({ type: 'progress', stage: 'using offline area', fraction: 0.1, bestScore: null });
   }
