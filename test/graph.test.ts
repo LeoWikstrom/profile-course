@@ -55,6 +55,56 @@ describe('edgePenalty', () => {
   });
 });
 
+describe('bridge and tunnel handling', () => {
+  it('flags bridges and tunnels as levelled', () => {
+    const mkResponse = (tags: Record<string, string>): OverpassResponse => ({
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.0 },
+        { type: 'node', id: 2, lat: 57.701, lon: 12.0 },
+        { type: 'way', id: 10, nodes: [1, 2], tags },
+      ],
+    });
+    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'yes' })).edges[0]!.levelled).toBe(true);
+    expect(buildGraph(mkResponse({ highway: 'footway', tunnel: 'yes' })).edges[0]!.levelled).toBe(true);
+    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'no' })).edges[0]!.levelled).toBe(false);
+    expect(buildGraph(mkResponse({ highway: 'footway' })).edges[0]!.levelled).toBe(false);
+  });
+
+  it('levelled edges get linearly interpolated elevation', async () => {
+    const { sampleEdgeElevations } = await import('../src/graph/build');
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.703, lon: 12.03 }, // ~330 m, many samples
+        { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'footway', bridge: 'yes' } },
+      ],
+    };
+    const graph = buildGraph(response);
+    // A sampler pretending there is a deep valley everywhere except endpoints.
+    const { TerrainSampler } = await import('../src/net/terrain');
+    class ValleySampler extends TerrainSampler {
+      constructor() {
+        super(13, () => {
+          throw new Error('no network');
+        });
+      }
+      override async elevations(lats: ArrayLike<number>): Promise<Float32Array> {
+        const out = new Float32Array(lats.length).fill(-40);
+        out[0] = 20;
+        out[lats.length - 1] = 24;
+        return out;
+      }
+    }
+    await sampleEdgeElevations(graph, new ValleySampler());
+    const elev = graph.edges[0]!.elev!;
+    expect(elev[0]).toBeCloseTo(20);
+    expect(elev[elev.length - 1]).toBeCloseTo(24);
+    const mid = elev[Math.floor(elev.length / 2)]!;
+    expect(mid).toBeGreaterThan(20); // no valley dip
+    expect(mid).toBeLessThan(24);
+  });
+});
+
 describe('buildGraph on the Skatås fixture', () => {
   const graph = buildGraph(skatas);
 

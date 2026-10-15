@@ -142,6 +142,8 @@ export function buildGraph(response: OverpassResponse): Graph {
       }
       if (lengthM < 1) continue;
       const last = lats.length - 1;
+      const bridge = tags['bridge'];
+      const tunnel = tags['tunnel'];
       edges.push({
         a,
         b,
@@ -151,6 +153,7 @@ export function buildGraph(response: OverpassResponse): Graph {
         lats,
         lons,
         elev: null,
+        levelled: (!!bridge && bridge !== 'no') || (!!tunnel && tunnel !== 'no'),
         turnOffsets: Float64Array.from(turnPositions(lats, lons)),
         headOutA: bearingDeg(lats[0]!, lons[0]!, lats[1]!, lons[1]!),
         headInB: bearingDeg(lats[last - 1]!, lons[last - 1]!, lats[last]!, lons[last]!),
@@ -359,7 +362,18 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
   const elev = await sampler.elevations(lats, lons);
   offset = 0;
   for (const { edge, count } of pending) {
-    edge.elev = movingMedian5(elev.subarray(offset, offset + count));
+    const raw = elev.subarray(offset, offset + count);
+    if (edge.levelled && count > 2) {
+      // Bridges span valleys and tunnels pass under hills; the DEM would show
+      // a spike. Runners stay level: interpolate between the endpoints.
+      const first = raw[0]!;
+      const last = raw[count - 1]!;
+      const out = new Float32Array(count);
+      for (let i = 0; i < count; i++) out[i] = first + ((last - first) * i) / (count - 1);
+      edge.elev = out;
+    } else {
+      edge.elev = movingMedian5(raw);
+    }
     offset += count;
   }
 }

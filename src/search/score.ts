@@ -2,6 +2,7 @@ import {
   GRADIENT_BIN_COUNT,
   gainLoss,
   gradientHistogram,
+  movingMedian5,
   type TargetProfile,
 } from '../gpx/profile';
 import { TURN_ANGLE_DEG, angleDiffDeg } from '../shared/geo';
@@ -151,10 +152,13 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     used.set(ei, { dir, endDist: distSoFar + e.lengthM });
   }
 
-  const start = samples[0] ?? 0;
-  for (let i = 0; i < w; i++) samples[i]! -= start;
+  // Same median filter as the target profile: kills single-sample DEM spikes
+  // that survive per-edge smoothing (short edges, edge joints).
+  const smoothed = movingMedian5(samples);
+  const start = smoothed[0] ?? 0;
+  for (let i = 0; i < w; i++) smoothed[i]! -= start;
 
-  const { gain, loss } = gainLoss(samples);
+  const { gain, loss } = gainLoss(smoothed);
   const split = surfaceLen.map((v) => (lengthM > 0 ? v / lengthM : 0)) as SurfaceMix;
   let denseTurns = 0;
   for (let i = 1; i < turnDists.length; i++) {
@@ -162,7 +166,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   }
   const km = Math.max(0.001, lengthM / 1000);
   return {
-    samples,
+    samples: smoothed,
     lengthM,
     gain,
     loss,

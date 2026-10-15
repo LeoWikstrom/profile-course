@@ -16,6 +16,11 @@ export interface GraphEdge {
   lons: Float64Array;
   /** Elevation every SAMPLE_STEP_M along the edge (a→b), filled by sampleEdgeElevations. */
   elev: Float32Array | null;
+  /**
+   * Bridge or tunnel: the DEM reports the terrain under/above it, so the
+   * elevation is interpolated between the endpoints instead.
+   */
+  levelled: boolean;
   /** Distances (m from the a-end) of internal turns along the edge geometry. */
   turnOffsets: Float64Array;
   /** Heading when entering at a / leaving at b, degrees; NaN for degenerate geometry. */
