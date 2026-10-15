@@ -276,10 +276,12 @@ export async function beamSearch(
     if (bucket.length === 0) continue;
 
     // Seeded multiplicative noise (up to 5 %) on the pruning rank, so a new
-    // seed ("Try another") explores genuinely different courses. Tie-break
-    // jitter alone changed nothing once the ranking got strong.
+    // seed ("Try another") explores genuinely different courses. Seed 1 stays
+    // noise-free: it is the best-effort default, and noise measurably worsens
+    // pruning quality.
+    const amp = seed === 1 ? 0 : 0.05;
     const noise = (i: number) =>
-      1 + 0.05 * ((((i * 2654435761 + seed * 2246822519) >>> 0) % 1024) / 1024);
+      1 + amp * ((((i * 2654435761 + seed * 2246822519) >>> 0) % 1024) / 1024);
     bucket.sort(
       (x, y) =>
         partialRank(s, x, weights, tp) * noise(x) - partialRank(s, y, weights, tp) * noise(y),
