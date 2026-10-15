@@ -47,7 +47,7 @@ export function renderResult(
   els.actions.hidden = false;
   els.actions.textContent = '';
   const tryAnother = document.createElement('button');
-  tryAnother.textContent = `Try another (seed ${course.seed + 1})`;
+  tryAnother.textContent = 'Try another';
   tryAnother.addEventListener('click', onTryAnother);
   els.actions.appendChild(tryAnother);
 

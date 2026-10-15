@@ -77,6 +77,14 @@ interface TargetPrefix {
   peakAtM: number;
 }
 
+const MAX_ROOTS = 120;
+
+function rootCell(graph: Graph, node: number): number {
+  const cy = Math.round((graph.nodeLat[node]! * 111320) / 250);
+  const cx = Math.round((graph.nodeLon[node]! * 58000) / 250);
+  return cy * 1_000_003 + cx;
+}
+
 const PEAK_MIN_HEIGHT_M = 15;
 // Generous: elev0 carries DEM bias (7 m observed at Slottsskogsvallen), and
 // the RMSE is offset-corrected anyway — guidance just needs to include all
@@ -235,10 +243,11 @@ export async function beamSearch(
     elev0 = e.a === startNode ? elev[0]! : elev[elev.length - 1]!;
   }
 
-  // Multi-start: one root state per allowed start node. The offset-corrected
-  // RMSE makes a shared elev0 reference safe across different start points.
-  // Roots all rank 0, so without a shuffle the beam would keep the first ~B
-  // in node-index order — a geographic cluster, not a spread.
+  // Multi-start: the course may begin at any allowed start node, but seeding
+  // every zone node dilutes the beam across thousands of half-developed
+  // lineages (measured: 54 vs 37 mismatch and a 10x slowdown). Subsample to
+  // at most one root per ~250 m cell, max MAX_ROOTS, seeded shuffle first so
+  // each seed picks a different representative per cell.
   let roots = returnToStart || !startNodes || startNodes.length === 0 ? [startNode] : startNodes;
   if (roots.length > 1) {
     const rng = mulberry32(seed * 7919 + 1);
@@ -246,6 +255,19 @@ export async function beamSearch(
     for (let i = roots.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
       [roots[i], roots[j]] = [roots[j]!, roots[i]!];
+    }
+    if (roots.length > MAX_ROOTS) {
+      const cells = new Set<number>();
+      const picked: number[] = [startNode];
+      cells.add(rootCell(graph, startNode));
+      for (const r of roots) {
+        if (picked.length >= MAX_ROOTS) break;
+        const c = rootCell(graph, r);
+        if (cells.has(c)) continue;
+        cells.add(c);
+        picked.push(r);
+      }
+      roots = picked;
     }
   }
   const s: StateStore = {
@@ -275,6 +297,16 @@ export async function beamSearch(
   const lastTargetIdx = targetSamples.length - 1;
 
   function complete(stateIdx: number): void {
+    // Cheap near-lower-bound gate before the expensive assemble + full score:
+    // offset-corrected RMSE and the shape max both reappear in the final
+    // score, and every other term is >= -2 (penalty bonuses).
+    if (best.length >= keepBest) {
+      const n = Math.max(1, s.sampleCount[stateIdx]!);
+      const mean = s.diffSum[stateIdx]! / n;
+      const rmse = Math.sqrt(Math.max(0, s.sq[stateIdx]! / n - mean * mean));
+      const bound = weights.rmse * rmse + weights.localShape * s.shapeMax[stateIdx]! - 3;
+      if (bound > best[best.length - 1]!.score) return;
+    }
     const path = reconstruct(s, stateIdx);
     if (path.edges.length === 0) return;
     const course = assembleCourse(graph, path);
@@ -291,11 +323,12 @@ export async function beamSearch(
     const bucket = buckets[b]!;
     if (bucket.length === 0) continue;
 
-    // Seeded multiplicative noise (up to 5 %) on the pruning rank, so a new
-    // seed ("Try another") explores genuinely different courses. Seed 1 stays
-    // noise-free: it is the best-effort default, and noise measurably worsens
-    // pruning quality.
-    const amp = seed === 1 ? 0 : 0.05;
+    // Seeded multiplicative noise on the pruning rank, so a new seed ("Try
+    // another") explores genuinely different courses. With multi-start the
+    // per-seed root selection already differs, so no rank noise is needed —
+    // it measurably worsens pruning (observed 80 vs 46 beam score). Pinned
+    // starts need a little noise for seeds to differ; seed 1 stays clean.
+    const amp = roots.length > 1 || seed === 1 ? 0 : 0.03;
     const noise = (i: number) =>
       1 + amp * ((((i * 2654435761 + seed * 2246822519) >>> 0) % 1024) / 1024);
     bucket.sort(
@@ -320,6 +353,8 @@ export async function beamSearch(
     };
     const chosen = new Set<number>();
     const cells = new Set<number>();
+    // Half the beam for spatial spread: measured best (a quarter lost ground
+    // on the 21 km benchmark, 46.9 vs 45.5 average over three seeds).
     const diversityQuota = Math.floor(beamWidth / 2);
     for (const si of bucket) {
       if (chosen.size >= diversityQuota) break;

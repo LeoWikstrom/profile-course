@@ -25,6 +25,8 @@
         <div id="target-chart"></div>
         <p class="hint" id="course-stats" hidden></p>
         <div id="course-actions" class="row" hidden></div>
+        <button id="find-button" disabled>Find course</button>
+        <button id="cancel-button" hidden>Cancel</button>
         <p class="hint" id="start-hint">Tap the map to set a start point.</p>
         <label class="control">
           <span>Start/finish zone: <output id="radius-value">5.0</output> km (course may leave it)</span>
@@ -58,8 +60,6 @@
           <input type="checkbox" id="return-toggle" />
           <span>Return to start (implies starting at the marker)</span>
         </label>
-        <button id="find-button" disabled>Find course</button>
-        <button id="cancel-button" hidden>Cancel</button>
         <details id="areas-panel">
           <summary class="hint">Offline areas</summary>
           <p class="hint">
@@ -82,7 +82,7 @@
         </details>
         <details id="advanced-panel">
           <summary class="hint">Advanced settings</summary>
-          <p class="hint">Weights: how much each factor matters (0 = ignore).</p>
+          <p class="hint">Weights: how much each factor matters (0 = ignore). Note: changing weights changes what the mismatch number means — only compare mismatches produced with the same weights.</p>
           <div class="row">
             <label class="control"><span>Local shape</span>
               <input type="number" id="w-localShape" value="6" min="0" step="0.5" /></label>
