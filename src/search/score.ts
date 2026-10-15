@@ -26,6 +26,12 @@ export interface Weights {
   turns: number;
   /** Per dense turn (within 100 m of the previous turn) per km. */
   denseTurns: number;
+  /**
+   * Worst local shape mismatch: max over 500 m windows of offset-corrected
+   * RMSE. Catches a spike where the target is flat, which global RMSE and
+   * the gain/loss term happily trade away.
+   */
+  localShape: number;
 }
 
 export const DEFAULT_WEIGHTS: Weights = {
@@ -38,6 +44,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   oscillation: 80,
   turns: 2,
   denseTurns: 2,
+  localShape: 1.5,
 };
 
 export const OSCILLATION_WINDOW_M = 1000;
@@ -230,6 +237,30 @@ export function surfaceMismatch(actual: SurfaceMix, desired: SurfaceMix): number
   return total;
 }
 
+const SHAPE_WINDOW_SAMPLES = 20; // 500 m at 25 m spacing
+
+/** Max over sliding windows of the RMSE after removing the window's mean offset. */
+export function worstWindowShapeError(course: Float32Array, target: Float32Array): number {
+  const n = Math.min(course.length, target.length);
+  if (n < SHAPE_WINDOW_SAMPLES) return 0;
+  let worst = 0;
+  for (let start = 0; start + SHAPE_WINDOW_SAMPLES <= n; start += SHAPE_WINDOW_SAMPLES / 2) {
+    let mean = 0;
+    for (let i = start; i < start + SHAPE_WINDOW_SAMPLES; i++) {
+      mean += course[i]! - target[i]!;
+    }
+    mean /= SHAPE_WINDOW_SAMPLES;
+    let sq = 0;
+    for (let i = start; i < start + SHAPE_WINDOW_SAMPLES; i++) {
+      const d = course[i]! - target[i]! - mean;
+      sq += d * d;
+    }
+    const rmse = Math.sqrt(sq / SHAPE_WINDOW_SAMPLES);
+    if (rmse > worst) worst = rmse;
+  }
+  return worst;
+}
+
 export function scoreCourse(
   course: AssembledCourse,
   target: TargetProfile,
@@ -260,7 +291,8 @@ export function scoreCourse(
     weights.repeat * course.repeatFraction +
     weights.oscillation * course.oscillationFraction +
     weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm) +
-    weights.denseTurns * course.denseTurnsPerKm
+    weights.denseTurns * course.denseTurnsPerKm +
+    weights.localShape * worstWindowShapeError(course.samples, target.samples)
   );
 }
 

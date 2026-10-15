@@ -91,7 +91,7 @@ export function renderInteractiveChart(
   const maxDist = (Math.max(target.length, course.length) - 1) * SAMPLE_STEP_M;
 
   const pad = 4;
-  const padTop = 30; // room for the crosshair label
+  const padTop = 32; // room for the two crosshair label lines
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('width', '100%');
@@ -124,19 +124,39 @@ export function renderInteractiveChart(
   crosshair.setAttribute('visibility', 'hidden');
   svg.appendChild(crosshair);
 
-  const dot = document.createElementNS(SVG_NS, 'circle');
-  dot.setAttribute('r', '4');
-  dot.setAttribute('fill', '#dc2626');
-  dot.setAttribute('stroke', '#fff');
-  dot.setAttribute('visibility', 'hidden');
-  svg.appendChild(dot);
+  const COURSE_COLOR = '#dc2626';
+  const TARGET_COLOR = '#9ca3af';
 
-  const text = document.createElementNS(SVG_NS, 'text');
-  text.setAttribute('font-size', '11');
-  text.setAttribute('fill', 'currentColor');
-  text.setAttribute('y', '12');
-  text.setAttribute('visibility', 'hidden');
-  svg.appendChild(text);
+  function makeDot(fill: string): SVGCircleElement {
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('r', '4');
+    c.setAttribute('fill', fill);
+    c.setAttribute('stroke', '#fff');
+    c.setAttribute('visibility', 'hidden');
+    svg.appendChild(c);
+    return c;
+  }
+  const targetDot = makeDot(TARGET_COLOR);
+  const dot = makeDot(COURSE_COLOR);
+
+  function makeText(fill: string, y: number): SVGTextElement {
+    const t = document.createElementNS(SVG_NS, 'text');
+    t.setAttribute('font-size', '11');
+    t.setAttribute('fill', fill);
+    t.setAttribute('y', String(y));
+    t.setAttribute('visibility', 'hidden');
+    svg.appendChild(t);
+    return t;
+  }
+  const text = makeText(COURSE_COLOR, 12);
+  const targetText = makeText(TARGET_COLOR, 25);
+
+  function gradeAt(samples: Float32Array, i: number): number {
+    const i0 = Math.max(0, i - 1);
+    const i1 = Math.min(samples.length - 1, i + 1);
+    if (i1 === i0) return 0;
+    return ((samples[i1]! - samples[i0]!) / ((i1 - i0) * SAMPLE_STEP_M)) * 100;
+  }
 
   function show(clientX: number): void {
     const rect = svg.getBoundingClientRect();
@@ -144,32 +164,38 @@ export function renderInteractiveChart(
     let i = Math.round((((fx - pad) / (width - 2 * pad)) * maxDist) / SAMPLE_STEP_M);
     i = Math.max(0, Math.min(i, course.length - 1));
     const cx = x(i);
-    const cy = y(course[i]!);
     crosshair.setAttribute('x1', String(cx));
     crosshair.setAttribute('x2', String(cx));
-    crosshair.setAttribute('y1', String(padTop - 10));
+    crosshair.setAttribute('y1', String(padTop));
     crosshair.setAttribute('y2', String(height - pad));
     dot.setAttribute('cx', String(cx));
-    dot.setAttribute('cy', String(cy));
+    dot.setAttribute('cy', String(y(course[i]!)));
 
-    const i0 = Math.max(0, i - 1);
-    const i1 = Math.min(course.length - 1, i + 1);
-    const grade = ((course[i1]! - course[i0]!) / ((i1 - i0) * SAMPLE_STEP_M)) * 100;
-    text.textContent = `${((i * SAMPLE_STEP_M) / 1000).toFixed(2)} km · ${course[i]!.toFixed(0)} m · ${grade.toFixed(1)} %`;
     const anchorEnd = cx > width / 2;
-    text.setAttribute('text-anchor', anchorEnd ? 'end' : 'start');
-    text.setAttribute('x', String(anchorEnd ? cx - 6 : cx + 6));
+    const anchor = anchorEnd ? 'end' : 'start';
+    const tx = String(anchorEnd ? cx - 6 : cx + 6);
+    const km = ((i * SAMPLE_STEP_M) / 1000).toFixed(2);
+    text.textContent = `${km} km · ${course[i]!.toFixed(0)} m · ${gradeAt(course, i).toFixed(1)} %`;
+    text.setAttribute('text-anchor', anchor);
+    text.setAttribute('x', tx);
 
-    crosshair.setAttribute('visibility', 'visible');
-    dot.setAttribute('visibility', 'visible');
-    text.setAttribute('visibility', 'visible');
+    const ti = Math.min(i, target.length - 1);
+    targetDot.setAttribute('cx', String(x(ti)));
+    targetDot.setAttribute('cy', String(y(target[ti]!)));
+    targetText.textContent = `race: ${target[ti]!.toFixed(0)} m · ${gradeAt(target, ti).toFixed(1)} %`;
+    targetText.setAttribute('text-anchor', anchor);
+    targetText.setAttribute('x', tx);
+
+    for (const el of [crosshair, dot, text, targetDot, targetText]) {
+      el.setAttribute('visibility', 'visible');
+    }
     onPoint(i);
   }
 
   function hide(): void {
-    crosshair.setAttribute('visibility', 'hidden');
-    dot.setAttribute('visibility', 'hidden');
-    text.setAttribute('visibility', 'hidden');
+    for (const el of [crosshair, dot, text, targetDot, targetText]) {
+      el.setAttribute('visibility', 'hidden');
+    }
     onPoint(null);
   }
 

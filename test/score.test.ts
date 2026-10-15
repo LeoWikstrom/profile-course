@@ -88,6 +88,30 @@ describe('scoreCourse', () => {
   });
 });
 
+describe('worstWindowShapeError', () => {
+  it('is 0 for identical profiles and insensitive to a constant offset', async () => {
+    const { worstWindowShapeError } = await import('../src/search/score');
+    const tri = triangle(801, 100);
+    expect(worstWindowShapeError(tri, tri)).toBe(0);
+    const offset = new Float32Array(801);
+    for (let i = 0; i < 801; i++) offset[i] = tri[i]! + 15;
+    expect(worstWindowShapeError(offset, tri)).toBeLessThan(0.01);
+  });
+
+  it('catches a short spike against a flat target', async () => {
+    const { worstWindowShapeError } = await import('../src/search/score');
+    const flat = new Float32Array(801);
+    const spiky = new Float32Array(801);
+    for (let i = 450; i < 460; i++) spiky[i] = 20; // ~250 m spike of 20 m
+    const err = worstWindowShapeError(spiky, flat);
+    expect(err).toBeGreaterThan(5);
+    // The same gain spread over the whole course is a far smaller local error.
+    const gentle = new Float32Array(801);
+    for (let i = 0; i < 801; i++) gentle[i] = (i / 800) * 20;
+    expect(worstWindowShapeError(gentle, flat)).toBeLessThan(1);
+  });
+});
+
 describe('emd', () => {
   it('is 0 for identical histograms', () => {
     const h = new Float32Array([0.25, 0.5, 0.25]);
