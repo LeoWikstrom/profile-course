@@ -244,6 +244,9 @@ async function search(
         })
       : await beamSearch(g, startNode, profile, targetLengthMeters, {
           seed,
+          // Multi-start splits the beam across many origins; give it double
+          // the budget so breadth does not starve depth.
+          beamWidth: startNodes ? 400 : 200,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           weights,

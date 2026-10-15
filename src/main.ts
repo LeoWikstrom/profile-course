@@ -58,7 +58,7 @@ const rangeFrom = document.getElementById('range-from') as HTMLInputElement;
 const rangeTo = document.getElementById('range-to') as HTMLInputElement;
 const surfaceSelect = document.getElementById('surface-select') as HTMLSelectElement;
 const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
-const startAtPointToggle = document.getElementById('start-at-point') as HTMLInputElement;
+const startAnywhereToggle = document.getElementById('start-anywhere') as HTMLInputElement;
 const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
 const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
 const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
@@ -84,7 +84,7 @@ function persistSession(): void {
       rangeToKm: rangeTo.value,
       surface: surfaceSelect.value,
       returnToStart: returnToggle.checked,
-      startAtPoint: startAtPointToggle.checked,
+      startAnywhere: startAnywhereToggle.checked,
       seed,
     },
     result: lastResult,
@@ -131,7 +131,7 @@ function readUrlState(): void {
   if (params.has('mix')) surfaceSelect.value = params.get('mix')!;
   if (params.has('seed')) seed = Number(params.get('seed')) || 1;
   if (params.has('rts')) returnToggle.checked = params.get('rts') === '1';
-  if (params.has('sap')) startAtPointToggle.checked = params.get('sap') === '1';
+  if (params.has('sa')) startAnywhereToggle.checked = params.get('sa') === '1';
   radiusSlider.dispatchEvent(new Event('input'));
 }
 
@@ -149,7 +149,7 @@ function writeUrlState(): void {
   if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
   if (rangeTo.value) params.set('to', rangeTo.value);
   if (returnToggle.checked) params.set('rts', '1');
-  if (startAtPointToggle.checked) params.set('sap', '1');
+  if (startAnywhereToggle.checked) params.set('sa', '1');
   history.replaceState(null, '', `#${params.toString()}`);
 }
 
@@ -185,7 +185,7 @@ function startSearch(): void {
     algorithm: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     returnToStart: returnToggle.checked,
-    startAtPoint: startAtPointToggle.checked || returnToggle.checked,
+    startAtPoint: !startAnywhereToggle.checked || returnToggle.checked,
     weights: collectWeights(),
   });
 }
@@ -386,7 +386,7 @@ map.onStartChange((start) => {
 for (const el of [
   surfaceSelect,
   returnToggle,
-  startAtPointToggle,
+  startAnywhereToggle,
   distanceInput,
   rangeFrom,
   rangeTo,
@@ -424,7 +424,7 @@ async function boot(): Promise<void> {
     if (session.settings.rangeToKm) rangeTo.value = session.settings.rangeToKm;
     if (session.settings.surface) surfaceSelect.value = session.settings.surface;
     returnToggle.checked = session.settings.returnToStart;
-    startAtPointToggle.checked = session.settings.startAtPoint ?? false;
+    startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
     if (session.profile) setFullProfile(session.profile);
     if (session.settings.start) map.setStart(session.settings.start);
     radiusSlider.dispatchEvent(new Event('input'));

@@ -53,12 +53,8 @@
           </select>
         </label>
         <label class="control checkbox">
-          <input type="checkbox" id="start-at-point" />
-          <span>Start exactly at the marker</span>
-        </label>
-        <label class="control checkbox">
           <input type="checkbox" id="return-toggle" />
-          <span>Return to start (implies starting at the marker)</span>
+          <span>Return to start</span>
         </label>
         <details id="areas-panel">
           <summary class="hint">Offline areas</summary>
@@ -101,6 +97,11 @@
             <label class="control"><span>Repeats</span>
               <input type="number" id="w-oscillation" value="80" min="0" step="10" /></label>
           </div>
+          <label class="control checkbox">
+            <input type="checkbox" id="start-anywhere" />
+            <span>Start anywhere in the zone (takes more compute time; does not guarantee a
+              better course)</span>
+          </label>
           <label class="control"><span>Seed</span>
             <input type="number" id="seed-input" value="1" min="1" step="1" /></label>
           <div class="control">
