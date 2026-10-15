@@ -62,9 +62,22 @@ interface TargetPrefix {
   cumLoss: Float32Array;
   denom: number;
   turnsPerKm: number;
+  /**
+   * Guidance toward the target's highest feature: distance from every node to
+   * the nearest "peak-capable" terrain (elevation ≈ start + peak value).
+   * Without it the beam is myopic — a big climb at km 5 cannot influence
+   * which flat prefixes survive at km 2, so features like a high bridge are
+   * never reached (the Älvsborgsbron case).
+   */
+  peakDist: Float64Array | null;
+  peakAtM: number;
 }
 
-function targetPrefix(target: TargetProfile): TargetPrefix {
+const PEAK_MIN_HEIGHT_M = 15;
+const PEAK_ELEV_TOLERANCE_M = 8;
+const PEAK_MISS_WEIGHT_PER_KM = 10;
+
+function targetPrefix(target: TargetProfile, graph: Graph, elev0: number): TargetPrefix {
   const samples = target.samples;
   const cumGain = new Float32Array(samples.length);
   const cumLoss = new Float32Array(samples.length);
@@ -73,11 +86,39 @@ function targetPrefix(target: TargetProfile): TargetPrefix {
     cumGain[i] = cumGain[i - 1]! + (d > 0 ? d : 0);
     cumLoss[i] = cumLoss[i - 1]! + (d < 0 ? -d : 0);
   }
+
+  let peakDist: Float64Array | null = null;
+  let peakAtM = 0;
+  let peakIdx = 0;
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i]! > samples[peakIdx]!) peakIdx = i;
+  }
+  const peakValue = samples[peakIdx]!;
+  if (peakValue >= PEAK_MIN_HEIGHT_M) {
+    const wantElev = elev0 + peakValue;
+    const attractors: number[] = [];
+    const nodeElev = new Float64Array(graph.nodeLat.length).fill(Number.NaN);
+    for (const e of graph.edges) {
+      if (!e.elev) continue;
+      nodeElev[e.a] = e.elev[0]!;
+      nodeElev[e.b] = e.elev[e.elev.length - 1]!;
+    }
+    for (let i = 0; i < nodeElev.length; i++) {
+      if (Math.abs(nodeElev[i]! - wantElev) <= PEAK_ELEV_TOLERANCE_M) attractors.push(i);
+    }
+    if (attractors.length > 0) {
+      peakDist = dijkstra(graph, attractors).dist;
+      peakAtM = peakIdx * 25;
+    }
+  }
+
   return {
     cumGain,
     cumLoss,
     denom: Math.max(1, target.totalGain + target.totalLoss),
     turnsPerKm: target.turnsPerKm,
+    peakDist,
+    peakAtM,
   };
 }
 
@@ -90,7 +131,15 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     (Math.abs(s.gain[i]! - tp.cumGain[ti]!) + Math.abs(s.loss[i]! - tp.cumLoss[ti]!)) / tp.denom;
   // Turn density is noisy on short prefixes; let it bite only after 500 m.
   const turnErr = d > 500 ? Math.abs(s.turns[i]! / (d / 1000) - tp.turnsPerKm) : 0;
+  // Before the target's main peak: penalise states that can no longer reach
+  // peak-capable terrain in the remaining distance (they will miss the climb).
+  let peakMiss = 0;
+  if (tp.peakDist && s.dist[i]! < tp.peakAtM) {
+    const shortfall = tp.peakDist[s.node[i]!]! - (tp.peakAtM - s.dist[i]!);
+    if (shortfall > 0) peakMiss = (shortfall / 1000) * PEAK_MISS_WEIGHT_PER_KM;
+  }
   return (
+    peakMiss +
     weights.rmse * rmse +
     weights.gainLoss * gainLossErr +
     weights.penalty * (s.penaltyLen[i]! / d) +
@@ -192,7 +241,7 @@ export async function beamSearch(
     edge: [-1],
     dir: [0],
   };
-  const tp = targetPrefix(target);
+  const tp = targetPrefix(target, graph, elev0);
 
   const buckets: number[][] = Array.from({ length: totalBuckets }, () => []);
   buckets[0]!.push(0);

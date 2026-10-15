@@ -159,6 +159,19 @@ describe('validEnd mask (start/finish zone)', () => {
   });
 });
 
+describe('peak guidance', () => {
+  it('still finds courses when the target has a significant peak', async () => {
+    // Triangle peaking +20 m at 600 m — enough to activate peak attractors.
+    const samples = new Float32Array(49);
+    for (let i = 0; i < 49; i++) samples[i] = 20 * (1 - Math.abs(i - 24) / 24);
+    const target = buildProfileFromSamples(samples, 1200);
+    const results = await beamSearch(graph, startNode, target, 1200, { seed: 1 });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.course.lengthM).toBeGreaterThanOrEqual(1164);
+    expect(results[0]!.course.lengthM).toBeLessThanOrEqual(1236);
+  });
+});
+
 describe('oscillation accounting in assembleCourse', () => {
   it('an immediate out-and-back counts as oscillation, doubled for reversal', async () => {
     const { assembleCourse } = await import('../src/search/score');
