@@ -340,6 +340,50 @@ export function edgeSamplePositions(edge: GraphEdge): { lats: Float64Array; lons
   return { lats, lons };
 }
 
+const RAMP_LENGTH_M = 400;
+
+/**
+ * Approach ramps to tall bridges are rarely bridge-tagged themselves, so the
+ * DEM leaves them at ground level and the deck becomes a vertical cliff —
+ * which the local-shape score then punishes, making the search avoid real
+ * climbs like Älvsborgsbron. Blend elevations within RAMP_LENGTH_M of an
+ * ele-tagged deck from deck height down to the terrain.
+ */
+export function blendBridgeRamps(graph: Graph): void {
+  for (const deck of graph.edges) {
+    if (!deck.levelled || deck.eleTag === null || !deck.elev) continue;
+    const deckEle = deck.eleTag;
+
+    for (const endNode of [deck.a, deck.b]) {
+      const bestDist = new Map<number, number>([[endNode, 0]]);
+      const queue: [number, number][] = [[endNode, 0]];
+      while (queue.length > 0) {
+        const [node, d0] = queue.shift()!;
+        for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
+          const e = graph.edges[graph.adjEdge[k]!]!;
+          if ((e.levelled && e.eleTag !== null) || !e.elev) continue;
+          const count = e.elev.length;
+          const spacing = e.lengthM / (count - 1);
+          for (let idx = 0; idx < count; idx++) {
+            const distFromNode = (node === e.a ? idx : count - 1 - idx) * spacing;
+            const d = d0 + distFromNode;
+            if (d >= RAMP_LENGTH_M) continue;
+            const t = d / RAMP_LENGTH_M;
+            const blended = deckEle * (1 - t) + e.elev[idx]! * t;
+            if (blended > e.elev[idx]!) e.elev[idx] = blended;
+          }
+          const nd = d0 + e.lengthM;
+          const next = e.a === node ? e.b : e.a;
+          if (nd < RAMP_LENGTH_M && nd < (bestDist.get(next) ?? Infinity)) {
+            bestDist.set(next, nd);
+            queue.push([next, nd]);
+          }
+        }
+      }
+    }
+  }
+}
+
 export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler): Promise<void> {
   const pending: { edge: GraphEdge; count: number }[] = [];
   let total = 0;
@@ -382,4 +426,6 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
     }
     offset += count;
   }
+
+  blendBridgeRamps(graph);
 }

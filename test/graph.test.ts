@@ -135,6 +135,51 @@ describe('bridge and tunnel handling', () => {
     const elev = graph.edges[0]!.elev!;
     for (const v of elev) expect(v).toBe(50);
   });
+
+  it('approach edges ramp up to an ele-tagged deck instead of a cliff', async () => {
+    const { sampleEdgeElevations } = await import('../src/graph/build');
+    const { TerrainSampler } = await import('../src/net/terrain');
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.697, lon: 12.03 }, // far end of approach
+        { type: 'node', id: 2, lat: 57.7, lon: 12.03 }, // bridgehead
+        { type: 'node', id: 3, lat: 57.703, lon: 12.03 }, // far side of deck
+        { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'path' } }, // ~330 m approach
+        {
+          type: 'way',
+          id: 11,
+          nodes: [2, 3],
+          tags: { highway: 'path', bridge: 'yes', ele: '50' },
+        },
+      ],
+    };
+    const graph = buildGraph(response);
+    class GroundSampler extends TerrainSampler {
+      constructor() {
+        super(13, () => {
+          throw new Error('no network');
+        });
+      }
+      override async elevations(lats: ArrayLike<number>): Promise<Float32Array> {
+        return new Float32Array(lats.length).fill(5);
+      }
+    }
+    await sampleEdgeElevations(graph, new GroundSampler());
+
+    const approach = graph.edges.find((e) => !e.levelled)!;
+    const elev = approach.elev!;
+    // Find which end touches the deck (node shared with the levelled edge).
+    const deckEdge = graph.edges.find((e) => e.levelled)!;
+    const sharedIsA = approach.a === deckEdge.a || approach.a === deckEdge.b;
+    const atDeck = sharedIsA ? elev[0]! : elev[elev.length - 1]!;
+    const atFar = sharedIsA ? elev[elev.length - 1]! : elev[0]!;
+    expect(atDeck).toBeGreaterThan(45); // ~deck height at the bridgehead
+    expect(atFar).toBeLessThan(25); // tapers towards ground
+    // Monotone-ish ramp: no cliff anywhere along the approach.
+    for (let i = 1; i < elev.length; i++) {
+      expect(Math.abs(elev[i]! - elev[i - 1]!)).toBeLessThan(10);
+    }
+  });
 });
 
 describe('buildGraph on the Skatås fixture', () => {
