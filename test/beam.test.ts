@@ -142,6 +142,18 @@ describe('validEnd mask (start/finish zone)', () => {
   });
 });
 
+describe('oscillation accounting in assembleCourse', () => {
+  it('an immediate out-and-back counts as oscillation, doubled for reversal', async () => {
+    const { assembleCourse } = await import('../src/search/score');
+    const ei = graph.adjEdge[graph.adjOffset[startNode]!]!;
+    const e = graph.edges[ei]!;
+    const dirOut = e.a === startNode ? 1 : 0;
+    const course = assembleCourse(graph, { edges: [ei, ei], dirs: [dirOut, 1 - dirOut] });
+    expect(course.oscillationFraction).toBeCloseTo(1, 5); // 2x length over 2x length
+    expect(course.repeatFraction).toBe(0);
+  });
+});
+
 describe('improveCandidates', () => {
   it('never worsens the best score', async () => {
     const target = flatTarget(1200);

@@ -13,7 +13,14 @@ export interface Weights {
   histogram: number;
   surface: number;
   penalty: number;
+  /** Far-apart edge reuse (legitimate laps), mildly discouraged. */
   repeat: number;
+  /**
+   * Edge reuse within OSCILLATION_WINDOW_M of the previous use — bouncing up
+   * and down the same hill. Weighted hard: re-climbing a small hill to fake
+   * the target's gain is never what the runner wants.
+   */
+  oscillation: number;
   /** Per |turns/km| difference from the target. */
   turns: number;
   /** Per dense turn (within 100 m of the previous turn) per km. */
@@ -27,9 +34,12 @@ export const DEFAULT_WEIGHTS: Weights = {
   surface: 15,
   penalty: 30,
   repeat: 10,
+  oscillation: 80,
   turns: 2,
   denseTurns: 2,
 };
+
+export const OSCILLATION_WINDOW_M = 1000;
 
 const DENSE_TURN_GAP_M = 100;
 
@@ -72,6 +82,7 @@ export interface AssembledCourse {
   surfaceSplit: SurfaceMix;
   penaltyFraction: number;
   repeatFraction: number;
+  oscillationFraction: number;
   turnsPerKm: number;
   denseTurnsPerKm: number;
 }
@@ -89,8 +100,9 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   const surfaceLen: SurfaceMix = [0, 0, 0, 0];
   let penaltyLen = 0;
   let repeatLen = 0;
-  /** Edge index -> direction of first traversal (0/1). */
-  const used = new Map<number, number>();
+  let oscillationLen = 0;
+  /** Edge index -> direction and course distance of the last traversal. */
+  const used = new Map<number, { dir: number; endDist: number }>();
 
   const turnDists: number[] = [];
   let prevExitHead = Number.NaN;
@@ -128,14 +140,15 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
     const dir = forward ? 1 : 0;
-    const firstDir = used.get(ei);
-    if (firstDir === undefined) {
-      used.set(ei, dir);
-    } else {
-      // A lap in the same direction is a mild repeat; going back the way we
-      // came (in-and-back-again) counts double.
-      repeatLen += firstDir === dir ? e.lengthM : 2 * e.lengthM;
+    const prev = used.get(ei);
+    if (prev !== undefined) {
+      // Reversed reuse counts double; reuse soon after the previous pass is
+      // oscillation (bouncing on the same hill), not a lap.
+      const weighted = prev.dir === dir ? e.lengthM : 2 * e.lengthM;
+      if (distSoFar - prev.endDist < OSCILLATION_WINDOW_M) oscillationLen += weighted;
+      else repeatLen += weighted;
     }
+    used.set(ei, { dir, endDist: distSoFar + e.lengthM });
   }
 
   const start = samples[0] ?? 0;
@@ -156,6 +169,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     surfaceSplit: split,
     penaltyFraction: lengthM > 0 ? penaltyLen / lengthM : 0,
     repeatFraction: lengthM > 0 ? repeatLen / lengthM : 0,
+    oscillationFraction: lengthM > 0 ? oscillationLen / lengthM : 0,
     turnsPerKm: turnDists.length / km,
     denseTurnsPerKm: denseTurns / km,
   };
@@ -240,6 +254,7 @@ export function scoreCourse(
     weights.surface * (desiredMix ? surfaceMismatch(course.surfaceSplit, desiredMix) : 0) +
     weights.penalty * course.penaltyFraction +
     weights.repeat * course.repeatFraction +
+    weights.oscillation * course.oscillationFraction +
     weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm) +
     weights.denseTurns * course.denseTurnsPerKm
   );

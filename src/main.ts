@@ -4,12 +4,17 @@ import { SURFACE_PRESETS } from './search/score';
 import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
-import { renderProfileChart } from './ui/profileChart';
+import { renderInteractiveChart, renderProfileChart } from './ui/profileChart';
 import { renderResult } from './ui/resultPanel';
+import { initSheet } from './ui/sheet';
 import SearchWorker from './search/worker?worker';
 
 const map = createMap('map');
 const worker = new SearchWorker();
+initSheet(
+  document.getElementById('sheet') as HTMLElement,
+  document.getElementById('sheet-handle') as HTMLElement,
+);
 
 function send(msg: MainToWorker): void {
   worker.postMessage(msg);
@@ -65,19 +70,15 @@ function showResult(result: { course: CourseResult; profile: TargetProfile }): v
   map.drawCourse(result.course.segments);
   map.decorateCourse(result.course.exportPoints);
   const points = result.course.exportPoints;
-  renderResult(
-    results,
-    result.course,
-    result.profile,
-    () => {
-      seed += 1;
-      startSearch();
-    },
-    (i) => {
-      if (i === null) map.hideCoursePoint();
-      else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
-    },
-  );
+  // The combined chart replaces the target-only chart at the top of the sheet.
+  renderInteractiveChart(targetChart, result.profile.samples, result.course.samples, (i) => {
+    if (i === null) map.hideCoursePoint();
+    else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
+  });
+  renderResult(results, result.course, () => {
+    seed += 1;
+    startSearch();
+  });
 }
 
 /** The profile actually searched for: the race window, rebased. */
@@ -131,6 +132,8 @@ function startSearch(): void {
   searching = true;
   results.hidden = true;
   map.clearCourse();
+  map.hideCoursePoint();
+  refreshTargetChart(); // back to the target-only chart while searching
   findButton.disabled = true;
   findButton.textContent = 'Working…';
   writeUrlState();

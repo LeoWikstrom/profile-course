@@ -30,11 +30,21 @@ body {
 }
 
 #sheet-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  margin: 0 -16px 4px;
+  touch-action: none;
+  cursor: grab;
+}
+
+#sheet-handle::before {
+  content: '';
   width: 36px;
   height: 4px;
   border-radius: 2px;
   background: GrayText;
-  margin: 6px auto 10px;
 }
 
 h1 {

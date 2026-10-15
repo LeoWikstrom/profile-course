@@ -32,6 +32,7 @@ function courseFrom(samples: Float32Array): AssembledCourse {
     surfaceSplit: [1, 0, 0, 0],
     penaltyFraction: 0,
     repeatFraction: 0,
+    oscillationFraction: 0,
     turnsPerKm: 0,
     denseTurnsPerKm: 0,
   };
@@ -63,13 +64,22 @@ describe('scoreCourse', () => {
     expect(mirrorScore).toBeGreaterThan(5 * shiftScore);
   });
 
-  it('penalty and repeat terms add to the score', () => {
+  it('penalty, repeat and oscillation terms add to the score', () => {
     const clean = courseFrom(triangle(801, 100));
-    const dirty = { ...clean, penaltyFraction: 0.2, repeatFraction: 0.5 };
+    const dirty = { ...clean, penaltyFraction: 0.2, repeatFraction: 0.5, oscillationFraction: 0.1 };
     expect(scoreCourse(dirty, target)).toBeCloseTo(
-      DEFAULT_WEIGHTS.penalty * 0.2 + DEFAULT_WEIGHTS.repeat * 0.5,
+      DEFAULT_WEIGHTS.penalty * 0.2 +
+        DEFAULT_WEIGHTS.repeat * 0.5 +
+        DEFAULT_WEIGHTS.oscillation * 0.1,
       3,
     );
+  });
+
+  it('oscillation outweighs the same amount of far repeat', () => {
+    const clean = courseFrom(triangle(801, 100));
+    const laps = { ...clean, repeatFraction: 0.3 };
+    const bounce = { ...clean, oscillationFraction: 0.3 };
+    expect(scoreCourse(bounce, target)).toBeGreaterThan(3 * scoreCourse(laps, target));
   });
 
   it('surface mismatch penalises a trail course against a road mix', () => {

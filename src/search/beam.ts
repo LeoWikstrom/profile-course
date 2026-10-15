@@ -9,6 +9,7 @@ import {
   scoreCourse,
   DEFAULT_WEIGHTS,
   MIX_ROAD,
+  OSCILLATION_WINDOW_M,
   type CoursePath,
   type SurfaceMix,
   type Weights,
@@ -36,7 +37,6 @@ export interface BeamOptions {
   shouldCancel?: () => boolean;
 }
 
-const REPEAT_LOOKBACK = 40;
 
 interface StateStore {
   node: number[];
@@ -92,7 +92,10 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     weights.rmse * rmse +
     weights.gainLoss * gainLossErr +
     weights.penalty * (s.penaltyLen[i]! / d) +
-    weights.repeat * (s.repeatLen[i]! / d) +
+    // repeatLen is reuse inside the oscillation window (see recentReuse). Use
+    // a fraction of the final weight: at full strength the term dominates the
+    // partial rank in dense/small graphs and starves the beam of diversity.
+    (weights.oscillation / 4) * (s.repeatLen[i]! / d) +
     weights.turns * turnErr
   );
 }
@@ -109,10 +112,14 @@ function reconstruct(s: StateStore, i: number): CoursePath {
   return { edges, dirs };
 }
 
-/** 0 = unused recently, 1 = reused same direction, 2 = reused in reverse. */
+/**
+ * 0 = unused within the oscillation window, 1 = reused same direction,
+ * 2 = reused in reverse. Walks back along the path for OSCILLATION_WINDOW_M.
+ */
 function recentReuse(s: StateStore, i: number, edgeIndex: number, dir: number): number {
+  const fromDist = s.dist[i]!;
   let cur = i;
-  for (let steps = 0; steps < REPEAT_LOOKBACK && cur >= 0 && s.edge[cur]! >= 0; steps++) {
+  while (cur >= 0 && s.edge[cur]! >= 0 && fromDist - s.dist[cur]! <= OSCILLATION_WINDOW_M) {
     if (s.edge[cur] === edgeIndex) return s.dir[cur] === dir ? 1 : 2;
     cur = s.parent[cur]!;
   }
