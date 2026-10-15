@@ -33,6 +33,8 @@ export interface BeamOptions {
    * they can no longer reach a valid end within the length budget.
    */
   validEnd?: Uint8Array | null;
+  /** Additional allowed start nodes (e.g. everything inside the zone). */
+  startNodes?: number[] | null;
   onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -202,6 +204,7 @@ export async function beamSearch(
     weights = DEFAULT_WEIGHTS,
     returnToStart = false,
     validEnd = null,
+    startNodes = null,
     onProgress,
     shouldCancel,
   } = options;
@@ -232,27 +235,30 @@ export async function beamSearch(
     elev0 = e.a === startNode ? elev[0]! : elev[elev.length - 1]!;
   }
 
+  // Multi-start: one root state per allowed start node. The offset-corrected
+  // RMSE makes a shared elev0 reference safe across different start points.
+  const roots = returnToStart || !startNodes || startNodes.length === 0 ? [startNode] : startNodes;
   const s: StateStore = {
-    node: [startNode],
-    dist: [0],
-    sq: [0],
-    diffSum: [0],
-    sampleCount: [0],
-    gain: [0],
-    loss: [0],
-    penaltyLen: [0],
-    repeatLen: [0],
-    shapeMax: [0],
-    turns: [0],
-    exitHead: [Number.NaN],
-    parent: [-1],
-    edge: [-1],
-    dir: [0],
+    node: [...roots],
+    dist: roots.map(() => 0),
+    sq: roots.map(() => 0),
+    diffSum: roots.map(() => 0),
+    sampleCount: roots.map(() => 0),
+    gain: roots.map(() => 0),
+    loss: roots.map(() => 0),
+    penaltyLen: roots.map(() => 0),
+    repeatLen: roots.map(() => 0),
+    shapeMax: roots.map(() => 0),
+    turns: roots.map(() => 0),
+    exitHead: roots.map(() => Number.NaN),
+    parent: roots.map(() => -1),
+    edge: roots.map(() => -1),
+    dir: roots.map(() => 0),
   };
   const tp = targetPrefix(target, graph, elev0);
 
   const buckets: number[][] = Array.from({ length: totalBuckets }, () => []);
-  buckets[0]!.push(0);
+  for (let i = 0; i < roots.length; i++) buckets[0]!.push(i);
 
   const best: WalkCandidate[] = [];
   const targetSamples = target.samples;

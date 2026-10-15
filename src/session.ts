@@ -10,6 +10,7 @@ export interface SessionSettings {
   rangeToKm: string;
   surface: string;
   returnToStart: boolean;
+  startAtPoint?: boolean;
   seed: number;
 }
 

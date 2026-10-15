@@ -36,6 +36,7 @@ const rangeFrom = document.getElementById('range-from') as HTMLInputElement;
 const rangeTo = document.getElementById('range-to') as HTMLInputElement;
 const surfaceSelect = document.getElementById('surface-select') as HTMLSelectElement;
 const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
+const startAtPointToggle = document.getElementById('start-at-point') as HTMLInputElement;
 const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
 const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
 const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
@@ -61,6 +62,7 @@ function persistSession(): void {
       rangeToKm: rangeTo.value,
       surface: surfaceSelect.value,
       returnToStart: returnToggle.checked,
+      startAtPoint: startAtPointToggle.checked,
       seed,
     },
     result: lastResult,
@@ -105,7 +107,8 @@ function readUrlState(): void {
   if (params.has('to')) rangeTo.value = params.get('to')!;
   if (params.has('mix')) surfaceSelect.value = params.get('mix')!;
   if (params.has('seed')) seed = Number(params.get('seed')) || 1;
-  returnToggle.checked = params.get('rts') === '1';
+  if (params.has('rts')) returnToggle.checked = params.get('rts') === '1';
+  if (params.has('sap')) startAtPointToggle.checked = params.get('sap') === '1';
   radiusSlider.dispatchEvent(new Event('input'));
 }
 
@@ -123,6 +126,7 @@ function writeUrlState(): void {
   if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
   if (rangeTo.value) params.set('to', rangeTo.value);
   if (returnToggle.checked) params.set('rts', '1');
+  if (startAtPointToggle.checked) params.set('sap', '1');
   history.replaceState(null, '', `#${params.toString()}`);
 }
 
@@ -158,6 +162,7 @@ function startSearch(): void {
     algorithm: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     returnToStart: returnToggle.checked,
+    startAtPoint: startAtPointToggle.checked || returnToggle.checked,
   });
 }
 
@@ -352,7 +357,15 @@ map.onStartChange((start) => {
   persistSession();
 });
 
-for (const el of [surfaceSelect, returnToggle, distanceInput, rangeFrom, rangeTo, radiusSlider]) {
+for (const el of [
+  surfaceSelect,
+  returnToggle,
+  startAtPointToggle,
+  distanceInput,
+  rangeFrom,
+  rangeTo,
+  radiusSlider,
+]) {
   el.addEventListener('change', persistSession);
 }
 
@@ -377,6 +390,7 @@ async function boot(): Promise<void> {
     if (session.settings.rangeToKm) rangeTo.value = session.settings.rangeToKm;
     if (session.settings.surface) surfaceSelect.value = session.settings.surface;
     returnToggle.checked = session.settings.returnToStart;
+    startAtPointToggle.checked = session.settings.startAtPoint ?? false;
     if (session.profile) setFullProfile(session.profile);
     if (session.settings.start) map.setStart(session.settings.start);
     radiusSlider.dispatchEvent(new Event('input'));

@@ -183,6 +183,7 @@ function toResult(g: Graph, candidate: WalkCandidate, seed: number): CourseResul
 interface SearchOptionsIn {
   desiredMix: [number, number, number, number] | null;
   returnToStart: boolean;
+  startAtPoint: boolean;
 }
 
 async function search(
@@ -201,6 +202,14 @@ async function search(
   const profile: TargetProfile = target;
   const tGraph = performance.now();
 
+  // A loop (return-to-start) needs a fixed anchor; otherwise the course may
+  // begin anywhere inside the start/finish zone unless pinned to the marker.
+  let startNodes: number[] | null = null;
+  if (!opts.startAtPoint && !opts.returnToStart && validEnd) {
+    startNodes = [];
+    for (let i = 0; i < validEnd.length; i++) if (validEnd[i]) startNodes.push(i);
+  }
+
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
   let lastBestScore = Infinity;
   const streamBest = (best: { path: CoursePath; score: number } | null) => {
@@ -217,6 +226,7 @@ async function search(
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           validEnd,
+          startNodes,
           onProgress: (done, total, best) => {
             post({
               type: 'progress',
@@ -233,6 +243,7 @@ async function search(
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           validEnd,
+          startNodes,
           onProgress: (bucket, total, best) => {
             post({
               type: 'progress',
@@ -287,6 +298,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       search(msg.start, msg.radiusMeters, msg.target, msg.targetLengthMeters, msg.seed, msg.algorithm, {
         desiredMix: msg.desiredMix,
         returnToStart: msg.returnToStart,
+        startAtPoint: msg.startAtPoint,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),

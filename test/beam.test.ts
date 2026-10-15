@@ -159,6 +159,28 @@ describe('validEnd mask (start/finish zone)', () => {
   });
 });
 
+describe('multi-start (start anywhere in the zone)', () => {
+  it('courses may begin at any allowed start node', async () => {
+    const starts: number[] = [];
+    for (let i = 0; i < graph.nodeLat.length && starts.length < 30; i += 3) starts.push(i);
+    const target = flatTarget(1000);
+    const results = await beamSearch(graph, startNode, target, 1000, {
+      seed: 1,
+      startNodes: starts,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    const startSet = new Set(starts);
+    const rootsSeen = new Set<number>();
+    for (const c of results) {
+      const e = graph.edges[c.path.edges[0]!]!;
+      const root = c.path.dirs[0] === 1 ? e.a : e.b;
+      expect(startSet.has(root)).toBe(true);
+      rootsSeen.add(root);
+    }
+    expect(rootsSeen.size).toBeGreaterThan(1); // actually uses the freedom
+  });
+});
+
 describe('peak guidance', () => {
   it('still finds courses when the target has a significant peak', async () => {
     // Triangle peaking +20 m at 600 m — enough to activate peak attractors.

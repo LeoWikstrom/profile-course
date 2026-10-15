@@ -58,13 +58,21 @@ export async function improveCandidates(
   const maxLen = targetLengthM * 1.03;
   const improved: WalkCandidate[] = candidates.map((c) => ({ ...c }));
 
+  // With multi-start searches a candidate's root is not necessarily the
+  // marker node; derive it from the first edge.
+  const rootOf = (c: WalkCandidate): number => {
+    if (c.path.edges.length === 0) return startNode;
+    const e = graph.edges[c.path.edges[0]!]!;
+    return c.path.dirs[0] === 1 ? e.a : e.b;
+  };
+
   function scanOnce(start: WalkCandidate): WalkCandidate | null {
     let current = start;
     let anyChange = false;
 
     for (let windowStart = 0; ; windowStart += windowStepM) {
       if (shouldCancel?.()) break;
-      const nodes = pathNodes(graph, current.path, startNode);
+      const nodes = pathNodes(graph, current.path, rootOf(current));
       const cum: number[] = [0];
       for (const ei of current.path.edges) {
         cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);

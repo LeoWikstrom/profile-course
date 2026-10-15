@@ -39,6 +39,8 @@ export interface RandomWalkOptions {
   returnToStart?: boolean;
   /** 1 = node is a valid course end; see BeamOptions.validEnd. */
   validEnd?: Uint8Array | null;
+  /** Additional allowed start nodes; each walk picks one at random. */
+  startNodes?: number[] | null;
   onProgress?: (done: number, total: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -67,9 +69,11 @@ export async function randomWalkSearch(
     weights = DEFAULT_WEIGHTS,
     returnToStart = false,
     validEnd = null,
+    startNodes = null,
     onProgress,
     shouldCancel,
   } = options;
+  const roots = returnToStart || !startNodes || startNodes.length === 0 ? [startNode] : startNodes;
 
   const rng = mulberry32(seed);
   const minLen = targetLengthM * (1 - lengthTolerance);
@@ -97,7 +101,7 @@ export async function randomWalkSearch(
 
     const path: CoursePath = { edges: [], dirs: [] };
     const used = new Map<number, number>();
-    let node = startNode;
+    let node = roots.length === 1 ? roots[0]! : roots[Math.floor(rng() * roots.length)]!;
     let dist = 0;
     let prevEdge = -1;
     let failed = false;

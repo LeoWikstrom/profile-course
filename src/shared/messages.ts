@@ -59,6 +59,8 @@ export type MainToWorker =
       algorithm: 'beam' | 'walk';
       desiredMix: [number, number, number, number] | null;
       returnToStart: boolean;
+      /** Course must begin at the marker; otherwise anywhere inside the zone. */
+      startAtPoint: boolean;
     }
   | { type: 'cancel' };
 
