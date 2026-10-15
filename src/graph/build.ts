@@ -3,6 +3,7 @@ import { SAMPLE_STEP_M, movingMedian5 } from '../gpx/profile';
 import type { OverpassResponse, OverpassWay } from '../net/overpass';
 import type { TerrainSampler } from '../net/terrain';
 import {
+  otherNode,
   SURFACE_GRAVEL,
   SURFACE_PAVED,
   SURFACE_TRAIL,
@@ -340,46 +341,84 @@ export function edgeSamplePositions(edge: GraphEdge): { lats: Float64Array; lons
   return { lats, lons };
 }
 
-const RAMP_LENGTH_M = 400;
+/** Fraction of an ele-tagged bridge chain that ramps up on each side. */
+const CHAIN_RAMP_FRACTION = 0.4;
 
 /**
- * Approach ramps to tall bridges are rarely bridge-tagged themselves, so the
- * DEM leaves them at ground level and the deck becomes a vertical cliff —
- * which the local-shape score then punishes, making the search avoid real
- * climbs like Älvsborgsbron. Blend elevations within RAMP_LENGTH_M of an
- * ele-tagged deck from deck height down to the terrain.
+ * Model each chain of connected ele-tagged bridge edges as a trapezoid:
+ * ground elevation at the chain ends, linear ramps over 40 % of the length
+ * on each side, and a crest at the ele tag in the middle. A flat plateau at
+ * deck height mismatched the real profile of Älvsborgsbron (climb, short
+ * crest, descent) so badly that the scorer rejected the real race route.
  */
-export function blendBridgeRamps(graph: Graph): void {
-  for (const deck of graph.edges) {
-    if (!deck.levelled || deck.eleTag === null || !deck.elev) continue;
-    const deckEle = deck.eleTag;
+export function shapeBridgeChains(graph: Graph): void {
+  const isDeck = (e: GraphEdge) => e.levelled && e.eleTag !== null && e.elev !== null;
+  const assigned = new Set<number>();
 
-    for (const endNode of [deck.a, deck.b]) {
-      const bestDist = new Map<number, number>([[endNode, 0]]);
-      const queue: [number, number][] = [[endNode, 0]];
-      while (queue.length > 0) {
-        const [node, d0] = queue.shift()!;
-        for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
-          const e = graph.edges[graph.adjEdge[k]!]!;
-          if ((e.levelled && e.eleTag !== null) || !e.elev) continue;
-          const count = e.elev.length;
-          const spacing = e.lengthM / (count - 1);
-          for (let idx = 0; idx < count; idx++) {
-            const distFromNode = (node === e.a ? idx : count - 1 - idx) * spacing;
-            const d = d0 + distFromNode;
-            if (d >= RAMP_LENGTH_M) continue;
-            const t = d / RAMP_LENGTH_M;
-            const blended = deckEle * (1 - t) + e.elev[idx]! * t;
-            if (blended > e.elev[idx]!) e.elev[idx] = blended;
-          }
-          const nd = d0 + e.lengthM;
-          const next = e.a === node ? e.b : e.a;
-          if (nd < RAMP_LENGTH_M && nd < (bestDist.get(next) ?? Infinity)) {
-            bestDist.set(next, nd);
-            queue.push([next, nd]);
-          }
-        }
+  const deckAt = (node: number, exclude: number): number => {
+    for (let k = graph.adjOffset[node]!; k < graph.adjOffset[node + 1]!; k++) {
+      const ei = graph.adjEdge[k]!;
+      if (ei !== exclude && isDeck(graph.edges[ei]!) && !assigned.has(ei)) return ei;
+    }
+    return -1;
+  };
+
+  for (let seed = 0; seed < graph.edges.length; seed++) {
+    if (assigned.has(seed) || !isDeck(graph.edges[seed]!)) continue;
+
+    // Walk to one end of the chain, then collect it in order.
+    let startEdge = seed;
+    let startNode = graph.edges[seed]!.a;
+    for (;;) {
+      const prev = deckAt(startNode, startEdge);
+      if (prev < 0) break;
+      startEdge = prev;
+      startNode = otherNode(graph.edges[prev]!, startNode);
+    }
+    const chain: { ei: number; fromNode: number }[] = [];
+    let node = startNode;
+    let ei = startEdge;
+    for (;;) {
+      chain.push({ ei, fromNode: node });
+      assigned.add(ei);
+      node = otherNode(graph.edges[ei]!, node);
+      const next = deckAt(node, ei);
+      if (next < 0) break;
+      ei = next;
+    }
+
+    const chainLen = chain.reduce((sum, c) => sum + graph.edges[c.ei]!.lengthM, 0);
+    const rampLen = chainLen * CHAIN_RAMP_FRACTION;
+    const crest = Math.max(...chain.map((c) => graph.edges[c.ei]!.eleTag!));
+    // Ground at the ends comes from the DEM's value there (quay/street level).
+    const first = graph.edges[chain[0]!.ei]!;
+    const last = graph.edges[chain[chain.length - 1]!.ei]!;
+    const groundA = Math.min(
+      crest,
+      chain[0]!.fromNode === first.a ? first.elev![0]! : first.elev![first.elev!.length - 1]!,
+    );
+    const endNodeIsA = otherNode(last, chain[chain.length - 1]!.fromNode) === last.a;
+    const groundB = Math.min(crest, endNodeIsA ? last.elev![0]! : last.elev![last.elev!.length - 1]!);
+
+    const profileAt = (d: number): number => {
+      if (d < rampLen) return groundA + ((crest - groundA) * d) / rampLen;
+      if (d > chainLen - rampLen) return groundB + ((crest - groundB) * (chainLen - d)) / rampLen;
+      return crest;
+    };
+
+    let offset = 0;
+    for (const { ei: edgeIdx, fromNode } of chain) {
+      const e = graph.edges[edgeIdx]!;
+      const count = e.elev!.length;
+      const spacing = e.lengthM / (count - 1);
+      const out = new Float32Array(count);
+      const forward = fromNode === e.a;
+      for (let i = 0; i < count; i++) {
+        const dAlong = offset + i * spacing;
+        out[forward ? i : count - 1 - i] = profileAt(dAlong);
       }
+      e.elev = out;
+      offset += e.lengthM;
     }
   }
 }
@@ -410,9 +449,9 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
   for (const { edge, count } of pending) {
     const raw = elev.subarray(offset, offset + count);
     if (edge.levelled && edge.eleTag !== null) {
-      // Tall bridge decks carry an ele tag; the DEM only knows the water or
-      // ground beneath. The whole span sits at deck height.
-      edge.elev = new Float32Array(count).fill(edge.eleTag);
+      // Keep the raw DEM for now; shapeBridgeChains replaces it with the
+      // trapezoid profile (ground ends, crest at the ele tag) per chain.
+      edge.elev = Float32Array.from(raw);
     } else if (edge.levelled && count > 2) {
       // Bridges span valleys and tunnels pass under hills; the DEM would show
       // a spike. Runners stay level: interpolate between the endpoints.
@@ -427,5 +466,5 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
     offset += count;
   }
 
-  blendBridgeRamps(graph);
+  shapeBridgeChains(graph);
 }

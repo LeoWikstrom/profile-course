@@ -42,6 +42,8 @@ interface StateStore {
   node: number[];
   dist: number[];
   sq: number[];
+  /** Sum of (course − target) diffs, for offset-corrected partial RMSE. */
+  diffSum: number[];
   sampleCount: number[];
   gain: number[];
   loss: number[];
@@ -74,7 +76,10 @@ interface TargetPrefix {
 }
 
 const PEAK_MIN_HEIGHT_M = 15;
-const PEAK_ELEV_TOLERANCE_M = 8;
+// Generous: elev0 carries DEM bias (7 m observed at Slottsskogsvallen), and
+// the RMSE is offset-corrected anyway — guidance just needs to include all
+// plausibly peak-capable terrain.
+const PEAK_ELEV_TOLERANCE_M = 15;
 const PEAK_MISS_WEIGHT_PER_KM = 10;
 
 function targetPrefix(target: TargetProfile, graph: Graph, elev0: number): TargetPrefix {
@@ -124,7 +129,9 @@ function targetPrefix(target: TargetProfile, graph: Graph, elev0: number): Targe
 
 function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefix): number {
   const d = Math.max(1, s.dist[i]!);
-  const rmse = Math.sqrt(s.sq[i]! / Math.max(1, s.sampleCount[i]!));
+  const n = Math.max(1, s.sampleCount[i]!);
+  const mean = s.diffSum[i]! / n;
+  const rmse = Math.sqrt(Math.max(0, s.sq[i]! / n - mean * mean));
   let ti = Math.round(s.dist[i]! / 25);
   if (ti >= tp.cumGain.length) ti = tp.cumGain.length - 1;
   const gainLossErr =
@@ -229,6 +236,7 @@ export async function beamSearch(
     node: [startNode],
     dist: [0],
     sq: [0],
+    diffSum: [0],
     sampleCount: [0],
     gain: [0],
     loss: [0],
@@ -281,16 +289,39 @@ export async function beamSearch(
       2,
       Math.min(8, Math.floor((2 * beamWidth) / Math.max(1, graph.nodeLat.length))),
     );
-    const perNode = new Map<number, number>();
-    let w = 0;
+    // First pass: best state per ~400 m map cell, so the frontier stays
+    // spatially spread — otherwise the whole beam collapses onto one
+    // neighbourhood and distant features (a bridge at km 5) are unreachable.
+    const cellOf = (si: number) => {
+      const n = s.node[si]!;
+      const cy = Math.round((graph.nodeLat[n]! * 111320) / 400);
+      const cx = Math.round((graph.nodeLon[n]! * 58000) / 400);
+      return cy * 1_000_003 + cx;
+    };
+    const chosen = new Set<number>();
+    const cells = new Set<number>();
+    const diversityQuota = Math.floor(beamWidth / 2);
     for (const si of bucket) {
+      if (chosen.size >= diversityQuota) break;
+      const c = cellOf(si);
+      if (cells.has(c)) continue;
+      cells.add(c);
+      chosen.add(si);
+    }
+    // Diversity picks are guaranteed slots; the rest fill up by rank.
+    const kept: number[] = [];
+    for (const si of bucket) if (chosen.has(si)) kept.push(si);
+    const perNode = new Map<number, number>();
+    for (const si of bucket) {
+      if (kept.length >= beamWidth) break;
+      if (chosen.has(si)) continue;
       const count = perNode.get(s.node[si]!) ?? 0;
       if (count >= perNodeCap) continue;
       perNode.set(s.node[si]!, count + 1);
-      bucket[w++] = si;
-      if (w >= beamWidth) break;
+      kept.push(si);
     }
-    bucket.length = w;
+    bucket.length = 0;
+    bucket.push(...kept);
 
     // Same-bucket states (short edges) are appended to this queue and processed
     // now; distance strictly increases, and the cap bounds worst-case blowup.
@@ -357,6 +388,7 @@ export async function beamSearch(
         s.node.push(nextNode);
         s.dist.push(newDist);
         s.sq.push(sq);
+        s.diffSum.push(s.diffSum[si]! + diffSum);
         s.sampleCount.push(s.sampleCount[si]! + m - 1);
         s.gain.push(gain);
         s.loss.push(loss);

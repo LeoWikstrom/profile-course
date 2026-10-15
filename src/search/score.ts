@@ -241,25 +241,37 @@ export function surfaceMismatch(actual: SurfaceMix, desired: SurfaceMix): number
 }
 
 const SHAPE_WINDOW_SAMPLES = 20; // 500 m at 25 m spacing
+const SHAPE_SHIFT_SAMPLES = 6; // tolerate ±150 m longitudinal misalignment
 
-/** Max over sliding windows of the RMSE after removing the window's mean offset. */
+/**
+ * Max over sliding windows of the offset-corrected RMSE, where each window may
+ * shift up to ±150 m along the target. A real climb that sits slightly
+ * earlier/later than in the race (e.g. a modelled bridge ramp) aligns at some
+ * shift; a spike where the target is flat stays bad at every shift.
+ */
 export function worstWindowShapeError(course: Float32Array, target: Float32Array): number {
   const n = Math.min(course.length, target.length);
   if (n < SHAPE_WINDOW_SAMPLES) return 0;
   let worst = 0;
   for (let start = 0; start + SHAPE_WINDOW_SAMPLES <= n; start += SHAPE_WINDOW_SAMPLES / 2) {
-    let mean = 0;
-    for (let i = start; i < start + SHAPE_WINDOW_SAMPLES; i++) {
-      mean += course[i]! - target[i]!;
+    let best = Infinity;
+    for (let shift = -SHAPE_SHIFT_SAMPLES; shift <= SHAPE_SHIFT_SAMPLES; shift++) {
+      const t0 = start + shift;
+      if (t0 < 0 || t0 + SHAPE_WINDOW_SAMPLES > target.length) continue;
+      let mean = 0;
+      for (let i = 0; i < SHAPE_WINDOW_SAMPLES; i++) {
+        mean += course[start + i]! - target[t0 + i]!;
+      }
+      mean /= SHAPE_WINDOW_SAMPLES;
+      let sq = 0;
+      for (let i = 0; i < SHAPE_WINDOW_SAMPLES; i++) {
+        const d = course[start + i]! - target[t0 + i]! - mean;
+        sq += d * d;
+      }
+      const rmse = Math.sqrt(sq / SHAPE_WINDOW_SAMPLES);
+      if (rmse < best) best = rmse;
     }
-    mean /= SHAPE_WINDOW_SAMPLES;
-    let sq = 0;
-    for (let i = start; i < start + SHAPE_WINDOW_SAMPLES; i++) {
-      const d = course[i]! - target[i]! - mean;
-      sq += d * d;
-    }
-    const rmse = Math.sqrt(sq / SHAPE_WINDOW_SAMPLES);
-    if (rmse > worst) worst = rmse;
+    if (best !== Infinity && best > worst) worst = best;
   }
   return worst;
 }
@@ -270,13 +282,19 @@ export function scoreCourse(
   desiredMix: SurfaceMix | null = MIX_ROAD,
   weights: Weights = DEFAULT_WEIGHTS,
 ): number {
+  // Offset-corrected RMSE: a constant vertical offset between the two
+  // profiles is DEM-vs-GPX measurement bias at the start point (observed:
+  // 7 m at Slottsskogsvallen), not a real mismatch. Shape is what matters.
   const n = Math.min(course.samples.length, target.samples.length);
-  let sq = 0;
+  let diffSum = 0;
+  let diffSq = 0;
   for (let i = 0; i < n; i++) {
     const d = course.samples[i]! - target.samples[i]!;
-    sq += d * d;
+    diffSum += d;
+    diffSq += d * d;
   }
-  const rmse = n > 0 ? Math.sqrt(sq / n) : 0;
+  const mean = n > 0 ? diffSum / n : 0;
+  const rmse = n > 0 ? Math.sqrt(Math.max(0, diffSq / n - mean * mean)) : 0;
 
   const denom = Math.max(1, target.totalGain + target.totalLoss);
   const gainLossErr =
