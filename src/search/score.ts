@@ -34,9 +34,12 @@ export interface Weights {
   localShape: number;
 }
 
+// Local similarity (rmse, localShape) outweighs the global gain/loss match —
+// Leo's explicit priority: a course that locally mirrors the race beats one
+// that fakes matching totals.
 export const DEFAULT_WEIGHTS: Weights = {
   rmse: 1.0,
-  gainLoss: 20,
+  gainLoss: 8,
   histogram: 10,
   surface: 15,
   penalty: 30,
@@ -44,7 +47,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   oscillation: 80,
   turns: 2,
   denseTurns: 2,
-  localShape: 1.5,
+  localShape: 6,
 };
 
 export const OSCILLATION_WINDOW_M = 1000;

@@ -45,7 +45,7 @@ export async function improveCandidates(
 ): Promise<WalkCandidate[]> {
   const {
     k = 5,
-    passes = 2,
+    passes = 4,
     windowStepM = 400,
     windowLengthM = 800,
     maxCandidates = 5,

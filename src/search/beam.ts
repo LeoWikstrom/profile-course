@@ -47,6 +47,8 @@ interface StateStore {
   loss: number[];
   penaltyLen: number[];
   repeatLen: number[];
+  /** Running max of per-edge offset-corrected shape error (localShape proxy). */
+  shapeMax: number[];
   turns: number[];
   exitHead: number[];
   parent: number[];
@@ -96,7 +98,8 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     // a fraction of the final weight: at full strength the term dominates the
     // partial rank in dense/small graphs and starves the beam of diversity.
     (weights.oscillation / 4) * (s.repeatLen[i]! / d) +
-    weights.turns * turnErr
+    weights.turns * turnErr +
+    weights.localShape * s.shapeMax[i]!
   );
 }
 
@@ -182,6 +185,7 @@ export async function beamSearch(
     loss: [0],
     penaltyLen: [0],
     repeatLen: [0],
+    shapeMax: [0],
     turns: [0],
     exitHead: [Number.NaN],
     parent: [-1],
@@ -221,13 +225,18 @@ export async function beamSearch(
       (x, y) =>
         partialRank(s, x, weights, tp) + jitter(x) - partialRank(s, y, weights, tp) - jitter(y),
     );
-    // Keep at most 2 states per end node, or the beam fills with near-identical
-    // prefixes of the single best path and loses diversity.
+    // Cap states per end node, or the beam fills with near-identical prefixes
+    // of the single best path and loses diversity. Small graphs have few
+    // nodes, so the cap scales up to keep distinct histories alive.
+    const perNodeCap = Math.max(
+      2,
+      Math.min(8, Math.floor((2 * beamWidth) / Math.max(1, graph.nodeLat.length))),
+    );
     const perNode = new Map<number, number>();
     let w = 0;
     for (const si of bucket) {
       const count = perNode.get(s.node[si]!) ?? 0;
-      if (count >= 2) continue;
+      if (count >= perNodeCap) continue;
       perNode.set(s.node[si]!, count + 1);
       bucket[w++] = si;
       if (w >= beamWidth) break;
@@ -259,6 +268,8 @@ export async function beamSearch(
         let sq = s.sq[si]!;
         let gain = s.gain[si]!;
         let loss = s.loss[si]!;
+        let diffSum = 0;
+        let diffSq = 0;
         let prevRel = forward ? elev[0]! - elev0 : elev[m - 1]! - elev0;
         for (let p = 1; p < m; p++) {
           const rel = elev[forward ? p : m - 1 - p]! - elev0;
@@ -266,11 +277,18 @@ export async function beamSearch(
           if (ti > lastTargetIdx) ti = lastTargetIdx;
           const diff = rel - targetSamples[ti]!;
           sq += diff * diff;
+          diffSum += diff;
+          diffSq += diff * diff;
           const delta = rel - prevRel;
           if (delta > 0) gain += delta;
           else loss -= delta;
           prevRel = rel;
         }
+        // Offset-corrected shape error over this edge: a cheap incremental
+        // proxy for the final localShape window term.
+        const mean = diffSum / (m - 1);
+        const edgeShape = Math.sqrt(Math.max(0, diffSq / (m - 1) - mean * mean));
+        const shapeMax = Math.max(s.shapeMax[si]!, edgeShape);
 
         const reuse = recentReuse(s, si, ei, forward ? 1 : 0);
         const repeat = reuse === 0 ? 0 : reuse === 1 ? e.lengthM : 2 * e.lengthM;
@@ -295,6 +313,7 @@ export async function beamSearch(
         s.loss.push(loss);
         s.penaltyLen.push(s.penaltyLen[si]! + e.penalty * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
+        s.shapeMax.push(shapeMax);
         s.turns.push(turns);
         s.exitHead.push(exitHeading(e, forward));
         s.parent.push(si);

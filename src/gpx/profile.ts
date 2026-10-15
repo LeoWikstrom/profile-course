@@ -52,13 +52,40 @@ export function resampleElevation(
   return out;
 }
 
-export function gainLoss(samples: Float32Array): { gain: number; loss: number } {
+/**
+ * Gain/loss with hysteresis: direction only flips after the elevation moves
+ * more than thresholdM against the current trend. Plain summation counts
+ * every DEM wiggle and inflates a course's totals far above the (smoother)
+ * race GPX figures.
+ */
+export function gainLoss(samples: Float32Array, thresholdM = 2): { gain: number; loss: number } {
   let gain = 0;
   let loss = 0;
+  if (samples.length === 0) return { gain, loss };
+  let ref = samples[0]!;
+  let dir = 0;
   for (let i = 1; i < samples.length; i++) {
-    const d = samples[i]! - samples[i - 1]!;
-    if (d > 0) gain += d;
-    else loss -= d;
+    const d = samples[i]! - ref;
+    if (dir >= 0) {
+      if (d > 0) {
+        gain += d;
+        ref = samples[i]!;
+        if (dir === 0) dir = 1;
+      } else if (d < -thresholdM) {
+        loss -= d;
+        ref = samples[i]!;
+        dir = -1;
+      }
+    } else {
+      if (d < 0) {
+        loss -= d;
+        ref = samples[i]!;
+      } else if (d > thresholdM) {
+        gain += d;
+        ref = samples[i]!;
+        dir = 1;
+      }
+    }
   }
   return { gain, loss };
 }
