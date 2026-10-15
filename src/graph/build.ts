@@ -144,7 +144,9 @@ export function buildGraph(response: OverpassResponse): Graph {
       const last = lats.length - 1;
       const bridge = tags['bridge'];
       const tunnel = tags['tunnel'];
+      const ele = Number.parseFloat(tags['ele'] ?? '');
       edges.push({
+        eleTag: Number.isFinite(ele) ? ele : null,
         a,
         b,
         lengthM,
@@ -363,7 +365,11 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
   offset = 0;
   for (const { edge, count } of pending) {
     const raw = elev.subarray(offset, offset + count);
-    if (edge.levelled && count > 2) {
+    if (edge.levelled && edge.eleTag !== null) {
+      // Tall bridge decks carry an ele tag; the DEM only knows the water or
+      // ground beneath. The whole span sits at deck height.
+      edge.elev = new Float32Array(count).fill(edge.eleTag);
+    } else if (edge.levelled && count > 2) {
       // Bridges span valleys and tunnels pass under hills; the DEM would show
       // a spike. Runners stay level: interpolate between the endpoints.
       const first = raw[0]!;

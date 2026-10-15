@@ -21,6 +21,8 @@ export interface GraphEdge {
    * elevation is interpolated between the endpoints instead.
    */
   levelled: boolean;
+  /** OSM ele tag (metres) — tall bridge decks carry it (e.g. Älvsborgsbron ele=50). */
+  eleTag: number | null;
   /** Distances (m from the a-end) of internal turns along the edge geometry. */
   turnOffsets: Float64Array;
   /** Heading when entering at a / leaving at b, degrees; NaN for degenerate geometry. */

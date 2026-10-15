@@ -24,6 +24,7 @@ function makeGraph(): Graph {
     lons: new Float64Array([0, 0]),
     elev: new Float32Array([0, 0]),
     levelled: false,
+    eleTag: null,
     turnOffsets: new Float64Array(0),
     headOutA: Number.NaN,
     headInB: Number.NaN,

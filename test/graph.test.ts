@@ -103,6 +103,38 @@ describe('bridge and tunnel handling', () => {
     expect(mid).toBeGreaterThan(20); // no valley dip
     expect(mid).toBeLessThan(24);
   });
+
+  it('a bridge with an ele tag sits at deck height (Älvsborgsbron case)', async () => {
+    const { sampleEdgeElevations } = await import('../src/graph/build');
+    const { TerrainSampler } = await import('../src/net/terrain');
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.703, lon: 12.03 },
+        {
+          type: 'way',
+          id: 10,
+          nodes: [1, 2],
+          tags: { highway: 'path', bridge: 'yes', ele: '50' },
+        },
+      ],
+    };
+    const graph = buildGraph(response);
+    expect(graph.edges[0]!.eleTag).toBe(50);
+    class WaterSampler extends TerrainSampler {
+      constructor() {
+        super(13, () => {
+          throw new Error('no network');
+        });
+      }
+      override async elevations(lats: ArrayLike<number>): Promise<Float32Array> {
+        return new Float32Array(lats.length).fill(0); // river below
+      }
+    }
+    await sampleEdgeElevations(graph, new WaterSampler());
+    const elev = graph.edges[0]!.elev!;
+    for (const v of elev) expect(v).toBe(50);
+  });
 });
 
 describe('buildGraph on the Skatås fixture', () => {
