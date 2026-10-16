@@ -19,7 +19,7 @@ export function renderResult(
   els: ResultElements,
   course: CourseResult,
   action: { label: string; onAction: () => void },
-  onEdit?: () => void,
+  onEdit?: { editing: boolean; toggle: () => void },
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
@@ -62,9 +62,9 @@ export function renderResult(
 
   if (onEdit) {
     const edit = document.createElement('button');
-    edit.textContent = 'Edit';
-    edit.title = 'Tap a point on the course, then tap where it should go instead';
-    edit.addEventListener('click', onEdit);
+    edit.textContent = onEdit.editing ? 'Exit editing' : 'Edit';
+    edit.title = 'Editing mode: tap a course point, then tap where it should go; repeat until you exit';
+    edit.addEventListener('click', onEdit.toggle);
     els.actions.appendChild(edit);
   }
 

@@ -26,6 +26,8 @@ export interface MapController {
   onStartChange(cb: (start: LatLon) => void): void;
   /** The next map tap calls cb instead of placing the start marker. */
   armViaPlacement(cb: (p: LatLon) => void): void;
+  /** Cancel a pending armViaPlacement callback. */
+  disarmViaPlacement(): void;
   /** Redraws numbered, draggable via markers. */
   setViaMarkers(vias: LatLon[], onMove: (index: number, p: LatLon) => void): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
@@ -92,6 +94,9 @@ export function createMap(container: string): MapController {
   return {
     armViaPlacement(cb) {
       viaTapCb = cb;
+    },
+    disarmViaPlacement() {
+      viaTapCb = null;
     },
     setViaMarkers(vias, onMove) {
       for (const m of viaMarkers) m.remove();

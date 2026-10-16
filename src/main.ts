@@ -106,6 +106,7 @@ function showResult(
   result: { course: CourseResult; profile: TargetProfile },
   action?: { label: string; onAction: () => void },
 ): void {
+  lastAction = action;
   map.drawCourse(result.course.segments);
   map.decorateCourse(result.course.exportPoints);
   const points = result.course.exportPoints;
@@ -125,15 +126,38 @@ function showResult(
         startSearch();
       },
     },
-    () => startEdit(result),
+    { editing: editingMode, toggle: () => toggleEditing(result) },
   );
 }
 
-/** Two-tap reroute: tap a course point, then tap where it should go instead. */
-function startEdit(result: { course: CourseResult; profile: TargetProfile }): void {
-  startHint.textContent = 'Edit: tap a point ON the course…';
+/**
+ * Persistent editing mode: tap a course point, tap its new location, repeat —
+ * each reroute builds on the previous one — until Exit editing.
+ */
+let editingMode = false;
+let lastAction: { label: string; onAction: () => void } | undefined;
+
+function toggleEditing(result: { course: CourseResult; profile: TargetProfile }): void {
+  if (editingMode) {
+    exitEditing();
+    return;
+  }
+  editingMode = true;
+  if (lastResult) showResult(lastResult, lastAction); // refresh button label
+  armEditTap(result);
+}
+
+function exitEditing(): void {
+  editingMode = false;
+  map.disarmViaPlacement();
+  map.hideCoursePoint();
+  startHint.textContent = 'Editing finished.';
+  if (lastResult) showResult(lastResult, lastAction);
+}
+
+function armEditTap(result: { course: CourseResult; profile: TargetProfile }): void {
+  startHint.textContent = 'Editing: tap a point ON the course (Exit editing to stop)…';
   map.armViaPlacement((p1) => {
-    // Nearest course sample to the first tap → the km being edited.
     const points = result.course.exportPoints;
     let bestI = 0;
     let bestD = Infinity;
@@ -148,7 +172,7 @@ function startEdit(result: { course: CourseResult; profile: TargetProfile }): vo
     }
     const atKm = (bestI * 25) / 1000;
     map.showCoursePoint(points[bestI]!);
-    startHint.textContent = `Edit: rerouting near km ${atKm.toFixed(1)} — now tap where the course should go…`;
+    startHint.textContent = `Editing: rerouting near km ${atKm.toFixed(1)} — tap where the course should go…`;
     map.armViaPlacement((p2) => {
       map.hideCoursePoint();
       startHint.textContent = 'Rerouting…';
@@ -215,6 +239,7 @@ function startSearch(): void {
   const start = map.getStart();
   const profile = activeProfile();
   if (!start || !profile) return;
+  if (editingMode) exitEditing();
   searching = true;
   hideResult(resultEls);
   map.clearCourse();
@@ -339,10 +364,13 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (profile) {
         lastResult = { course: msg.course, profile };
         showResult(lastResult, { label: 'Improve this course', onAction: sendImproveMatched });
-        if (msg.snappedFraction < 0.9) {
-          startHint.textContent = `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`;
-        }
+        startHint.textContent =
+          msg.snappedFraction < 0.9
+            ? `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`
+            : `Course updated — mismatch ${msg.course.score.toFixed(1)}.`;
         persistSession();
+        // Stay in editing mode: arm the next tap pair on the updated course.
+        if (editingMode) armEditTap(lastResult);
       }
       searchDone();
       break;
