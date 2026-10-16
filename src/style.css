@@ -201,6 +201,18 @@ progress {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
+.via-marker {
+  background: #7c3aed;
+  color: #fff;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
 .km-marker {
   background: #111;
   color: #fff;

@@ -11,6 +11,7 @@ export interface SessionSettings {
   surface: string;
   returnToStart: boolean;
   startAnywhere?: boolean;
+  viaPoints?: { lat: number; lon: number; km: number | null }[];
   seed: number;
 }
 

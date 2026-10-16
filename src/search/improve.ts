@@ -20,6 +20,8 @@ export interface ImproveOptions {
   maxCandidates?: number;
   desiredMix?: SurfaceMix | null;
   weights?: Weights;
+  /** Reject window replacements that break constraints (e.g. via points). */
+  validatePath?: (path: CoursePath) => boolean;
   shouldCancel?: () => boolean;
 }
 
@@ -51,6 +53,7 @@ export async function improveCandidates(
     maxCandidates = 5,
     desiredMix = MIX_ROAD,
     weights = DEFAULT_WEIGHTS,
+    validatePath,
     shouldCancel,
   } = options;
 
@@ -91,6 +94,7 @@ export async function improveCandidates(
         const newLen = current.course.lengthM - windowLen + alt.lengthM;
         if (newLen < minLen || newLen > maxLen) continue;
         const newPath = spliceWindow(current.path, fromIdx, toIdx, alt);
+        if (validatePath && !validatePath(newPath)) continue;
         const course = assembleCourse(graph, newPath);
         const score = scoreCourse(course, target, desiredMix, weights);
         if (score < current.score) {

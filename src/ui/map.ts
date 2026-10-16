@@ -24,6 +24,10 @@ export interface MapController {
   setStart(start: LatLon): void;
   setRadius(meters: number): void;
   onStartChange(cb: (start: LatLon) => void): void;
+  /** The next map tap calls cb instead of placing the start marker. */
+  armViaPlacement(cb: (p: LatLon) => void): void;
+  /** Redraws numbered, draggable via markers. */
+  setViaMarkers(vias: LatLon[], onMove: (index: number, p: LatLon) => void): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
   /** Km labels and running-direction arrows along ~25 m-spaced course points. */
   decorateCourse(points: { lat: number; lon: number }[]): void;
@@ -70,12 +74,39 @@ export function createMap(container: string): MapController {
     notify();
   }
 
-  map.on('click', (e: L.LeafletMouseEvent) => placeStart(e.latlng));
+  let viaTapCb: ((p: LatLon) => void) | null = null;
+  map.on('click', (e: L.LeafletMouseEvent) => {
+    if (viaTapCb) {
+      const cb = viaTapCb;
+      viaTapCb = null;
+      cb({ lat: e.latlng.lat, lon: e.latlng.lng });
+      return;
+    }
+    placeStart(e.latlng);
+  });
 
   let courseLayer: L.LayerGroup | null = null;
   let pointMarker: L.CircleMarker | null = null;
+  let viaMarkers: L.Marker[] = [];
 
   return {
+    armViaPlacement(cb) {
+      viaTapCb = cb;
+    },
+    setViaMarkers(vias, onMove) {
+      for (const m of viaMarkers) m.remove();
+      viaMarkers = vias.map((v, i) => {
+        const m = L.marker([v.lat, v.lon], {
+          draggable: true,
+          icon: L.divIcon({ className: 'via-marker', html: String(i + 1), iconSize: [22, 22] }),
+        }).addTo(map);
+        m.on('moveend', () => {
+          const { lat, lng } = m.getLatLng();
+          onMove(i, { lat, lon: lng });
+        });
+        return m;
+      });
+    },
     drawCourse(segments, options) {
       courseLayer?.remove();
       courseLayer = L.layerGroup();

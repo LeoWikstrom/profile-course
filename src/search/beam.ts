@@ -35,6 +35,12 @@ export interface BeamOptions {
   validEnd?: Uint8Array | null;
   /** Additional allowed start nodes (e.g. everything inside the zone). */
   startNodes?: number[] | null;
+  /**
+   * Must-pass constraints, in order. nodes = graph nodes counting as "at the
+   * via"; dist = multi-source Dijkstra distances to them; kmM = optional
+   * course distance (metres) near which the via must be reached.
+   */
+  vias?: { nodes: Set<number>; dist: Float64Array; kmM: number | null }[];
   onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -51,6 +57,8 @@ interface StateStore {
   loss: number[];
   penaltyLen: number[];
   repeatLen: number[];
+  /** Bitmask of via points visited so far, in order. */
+  viaMask: number[];
   /** Running max of per-edge offset-corrected shape error (localShape proxy). */
   shapeMax: number[];
   turns: number[];
@@ -213,9 +221,13 @@ export async function beamSearch(
     returnToStart = false,
     validEnd = null,
     startNodes = null,
+    vias = [],
     onProgress,
     shouldCancel,
   } = options;
+  const fullViaMask = (1 << vias.length) - 1;
+  // Tolerance around a via's km: generous, "close to" per the spec.
+  const viaSlackM = Math.max(500, targetLengthM * 0.05);
 
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
@@ -280,6 +292,7 @@ export async function beamSearch(
     loss: roots.map(() => 0),
     penaltyLen: roots.map(() => 0),
     repeatLen: roots.map(() => 0),
+    viaMask: roots.map(() => 0),
     shapeMax: roots.map(() => 0),
     turns: roots.map(() => 0),
     exitHead: roots.map(() => Number.NaN),
@@ -370,9 +383,12 @@ export async function beamSearch(
     for (const si of bucket) {
       if (kept.length >= beamWidth) break;
       if (chosen.has(si)) continue;
-      const count = perNode.get(s.node[si]!) ?? 0;
+      // Via progress is part of a state's identity: a lineage that already
+      // passed via 1 must not be deduped against one that has not.
+      const key = s.node[si]! * 16 + (s.viaMask[si]! & 15);
+      const count = perNode.get(key) ?? 0;
       if (count >= perNodeCap) continue;
-      perNode.set(s.node[si]!, count + 1);
+      perNode.set(key, count + 1);
       kept.push(si);
     }
     bucket.length = 0;
@@ -395,6 +411,29 @@ export async function beamSearch(
         if (newDist > maxLen) continue;
         const nextNode = otherNode(e, node);
         if (distBack && newDist + distBack[nextNode]! > maxLen) continue;
+
+        // Via constraints: the next unvisited via must stay reachable within
+        // its km window (or within the course budget if it has no km).
+        let viaMask = s.viaMask[si]!;
+        if (vias.length > 0 && viaMask !== fullViaMask) {
+          let vi = 0;
+          while (vi < vias.length && (viaMask & (1 << vi)) !== 0) vi++;
+          const via = vias[vi]!;
+          if (via.nodes.has(nextNode)) {
+            if (via.kmM === null || Math.abs(newDist - via.kmM) <= viaSlackM) {
+              viaMask |= 1 << vi;
+            }
+          }
+          if ((viaMask & (1 << vi)) === 0) {
+            const reach = via.dist[nextNode]!;
+            if (via.kmM !== null) {
+              if (newDist > via.kmM + viaSlackM) continue; // window missed
+              if (newDist + reach > via.kmM + viaSlackM) continue; // can't make it
+            } else if (newDist + reach > maxLen) {
+              continue;
+            }
+          }
+        }
 
         const elev = e.elev!;
         const m = elev.length;
@@ -449,6 +488,7 @@ export async function beamSearch(
         s.loss.push(loss);
         s.penaltyLen.push(s.penaltyLen[si]! + e.penalty * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
+        s.viaMask.push(viaMask);
         s.shapeMax.push(shapeMax);
         s.turns.push(turns);
         s.exitHead.push(exitHeading(e, forward));
@@ -456,7 +496,9 @@ export async function beamSearch(
         s.edge.push(ei);
         s.dir.push(forward ? 1 : 0);
 
-        if (newDist >= minLen && (!endMask || endMask[nextNode])) complete(idx);
+        if (newDist >= minLen && (!endMask || endMask[nextNode]) && viaMask === fullViaMask) {
+          complete(idx);
+        }
         const nb = Math.floor(newDist / bucketSizeM);
         if (nb === b) bucket.push(idx);
         else if (nb < totalBuckets) buckets[nb]!.push(idx);

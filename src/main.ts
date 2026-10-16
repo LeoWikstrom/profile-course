@@ -95,6 +95,7 @@ function persistSession(): void {
       surface: surfaceSelect.value,
       returnToStart: returnToggle.checked,
       startAnywhere: startAnywhereToggle.checked,
+      viaPoints,
       seed,
     },
     result: lastResult,
@@ -210,6 +211,7 @@ function startSearch(): void {
     connectors: connectorsToggle.checked,
     beamWidth:
       Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
+    viaPoints,
   });
 }
 
@@ -380,6 +382,58 @@ rangeTo.addEventListener('input', () => {
 });
 
 const compareInput = document.getElementById('compare-input') as HTMLInputElement;
+const viaList = document.getElementById('via-list') as HTMLUListElement;
+const addViaButton = document.getElementById('add-via') as HTMLButtonElement;
+
+let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
+
+function renderVias(): void {
+  map.setViaMarkers(viaPoints, (i, p) => {
+    viaPoints[i] = { ...viaPoints[i]!, lat: p.lat, lon: p.lon };
+    renderVias();
+    persistSession();
+  });
+  viaList.textContent = '';
+  viaPoints.forEach((v, i) => {
+    const li = document.createElement('li');
+    li.textContent = `${i + 1}: ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} — km `;
+    const km = document.createElement('input');
+    km.type = 'number';
+    km.min = '0';
+    km.step = '0.1';
+    km.placeholder = 'any';
+    km.style.width = '70px';
+    if (v.km !== null) km.value = String(v.km);
+    km.addEventListener('change', () => {
+      viaPoints[i]!.km = km.value === '' ? null : Math.max(0, Number(km.value));
+      persistSession();
+    });
+    li.appendChild(km);
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.style.width = 'auto';
+    del.style.minHeight = '28px';
+    del.style.marginLeft = '8px';
+    del.addEventListener('click', () => {
+      viaPoints.splice(i, 1);
+      renderVias();
+      persistSession();
+    });
+    li.appendChild(del);
+    viaList.appendChild(li);
+  });
+  addViaButton.disabled = false;
+}
+
+addViaButton.addEventListener('click', () => {
+  addViaButton.textContent = 'Tap the map to place the via point…';
+  map.armViaPlacement((p) => {
+    viaPoints.push({ lat: p.lat, lon: p.lon, km: null });
+    addViaButton.textContent = 'Add via point (then tap the map)';
+    renderVias();
+    persistSession();
+  });
+});
 
 function targetTransfer(profile: TargetProfile) {
   return {
@@ -512,6 +566,8 @@ async function boot(): Promise<void> {
     if (session.settings.surface) surfaceSelect.value = session.settings.surface;
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
+    viaPoints = session.settings.viaPoints ?? [];
+    renderVias();
     if (session.profile) setFullProfile(session.profile);
     if (session.settings.start) map.setStart(session.settings.start);
     radiusSlider.dispatchEvent(new Event('input'));
@@ -522,6 +578,7 @@ async function boot(): Promise<void> {
   }
   // Explicit URL parameters win over the restored session.
   readUrlState();
+  renderVias();
 
   const storageInfo = document.getElementById('storage-info') as HTMLParagraphElement;
   storageInfo.textContent = await requestPersistentStorage();

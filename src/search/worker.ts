@@ -6,7 +6,7 @@ import {
   sampleEdgeElevations,
   snapToNode,
 } from '../graph/build';
-import type { Graph } from '../graph/types';
+import { otherNode, type Graph } from '../graph/types';
 import { deleteArea, listAreas, saveArea } from '../net/areaStore';
 import { fetchNetwork, getNetwork } from '../net/overpass';
 import { TerrainSampler } from '../net/terrain';
@@ -18,8 +18,10 @@ import type {
   LatLon,
   MainToWorker,
   TargetTransfer,
+  ViaPoint,
   WorkerToMain,
 } from '../shared/messages';
+import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
@@ -206,6 +208,43 @@ interface SearchOptionsIn {
   weights: Record<string, number> | null;
   connectors: boolean;
   beamWidth: number;
+  viaPoints: ViaPoint[];
+}
+
+const VIA_NEAR_M = 40;
+
+function resolveVias(
+  g: Graph,
+  viaPoints: ViaPoint[],
+): { nodes: Set<number>; dist: Float64Array; kmM: number | null }[] {
+  return viaPoints.map((v, i) => {
+    const nodes = new Set<number>();
+    for (let n = 0; n < g.nodeLat.length; n++) {
+      if (haversineMeters(v.lat, v.lon, g.nodeLat[n]!, g.nodeLon[n]!) <= VIA_NEAR_M) nodes.add(n);
+    }
+    if (nodes.size === 0) {
+      throw new Error(`Via point ${i + 1} is more than ${VIA_NEAR_M} m from any path`);
+    }
+    return { nodes, dist: dijkstra(g, [...nodes]).dist, kmM: v.km !== null ? v.km * 1000 : null };
+  });
+}
+
+/** True when the path visits every via node-set in order. */
+function pathVisitsVias(
+  g: Graph,
+  path: CoursePath,
+  vias: { nodes: Set<number> }[],
+  root: number,
+): boolean {
+  let vi = 0;
+  let node = root;
+  if (vias.length === 0) return true;
+  if (vias[0]!.nodes.has(node)) vi++;
+  for (let i = 0; i < path.edges.length && vi < vias.length; i++) {
+    node = otherNode(g.edges[path.edges[i]!]!, node);
+    if (vias[vi]!.nodes.has(node)) vi++;
+  }
+  return vi >= vias.length;
 }
 
 async function search(
@@ -233,6 +272,19 @@ async function search(
   }
 
   const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights ?? {}) };
+  const vias = resolveVias(g, opts.viaPoints);
+  if (vias.length > 0 && algorithm === 'walk') {
+    throw new Error('Via points require the beam search algorithm');
+  }
+  const validatePath =
+    vias.length > 0
+      ? (path: CoursePath) => {
+          const first = g.edges[path.edges[0]!];
+          if (!first) return false;
+          const root = path.dirs[0] === 1 ? first.a : first.b;
+          return pathVisitsVias(g, path, vias, root);
+        }
+      : undefined;
 
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
   let lastBestScore = Infinity;
@@ -266,6 +318,7 @@ async function search(
       : await beamSearch(g, startNode, profile, targetLengthMeters, {
           seed,
           beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
+          vias,
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           weights,
@@ -297,6 +350,7 @@ async function search(
   const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
     desiredMix: opts.desiredMix,
     weights,
+    validatePath,
     shouldCancel: () => cancelled,
   });
   if (cancelled) return;
@@ -417,6 +471,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         weights: msg.weights,
         connectors: msg.connectors,
         beamWidth: msg.beamWidth,
+        viaPoints: msg.viaPoints,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),

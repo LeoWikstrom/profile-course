@@ -3,6 +3,13 @@ export interface LatLon {
   lon: number;
 }
 
+export interface ViaPoint {
+  lat: number;
+  lon: number;
+  /** Optional km (decimals) near which the point should be reached. */
+  km: number | null;
+}
+
 /** TargetProfile fields, structured-cloneable for postMessage. */
 export interface TargetTransfer {
   totalDistance: number;
@@ -69,6 +76,8 @@ export type MainToWorker =
       connectors: boolean;
       /** Beam width (search effort); default 200. */
       beamWidth: number;
+      /** Must-pass points, in order; each with an optional km. */
+      viaPoints: ViaPoint[];
     }
   | {
       /** Map-match an uploaded course and score it against the target. */

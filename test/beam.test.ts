@@ -194,6 +194,56 @@ describe('peak guidance', () => {
   });
 });
 
+describe('via points', () => {
+  it('winning courses pass the via, pruning without it finds none', async () => {
+    const { dijkstra } = await import('../src/graph/dijkstra');
+    const { haversineMeters } = await import('../src/shared/geo');
+    // Pick a node ~250-400 m from the start as the via.
+    const distFromStart = dijkstra(graph, [startNode]).dist;
+    let viaNode = -1;
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (distFromStart[i]! > 250 && distFromStart[i]! < 400) {
+        viaNode = i;
+        break;
+      }
+    }
+    expect(viaNode).toBeGreaterThanOrEqual(0);
+    const nodes = new Set<number>();
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (
+        haversineMeters(
+          graph.nodeLat[viaNode]!,
+          graph.nodeLon[viaNode]!,
+          graph.nodeLat[i]!,
+          graph.nodeLon[i]!,
+        ) <= 40
+      ) {
+        nodes.add(i);
+      }
+    }
+    const vias = [{ nodes, dist: dijkstra(graph, [...nodes]).dist, kmM: null }];
+
+    const target = flatTarget(1200);
+    const results = await beamSearch(graph, startNode, target, 1200, { seed: 1, vias });
+    expect(results.length).toBeGreaterThan(0);
+    for (const c of results) {
+      let node = startNode;
+      let visited = nodes.has(node);
+      for (const ei of c.path.edges) {
+        const e = graph.edges[ei]!;
+        node = e.a === node ? e.b : e.a;
+        if (nodes.has(node)) visited = true;
+      }
+      expect(visited).toBe(true);
+    }
+
+    // An unreachable via (km window impossible) yields no candidates.
+    const impossible = [{ nodes, dist: vias[0]!.dist, kmM: 50_000 }];
+    const none = await beamSearch(graph, startNode, target, 1200, { seed: 1, vias: impossible });
+    expect(none.length).toBe(0);
+  });
+});
+
 describe('oscillation accounting in assembleCourse', () => {
   it('an immediate out-and-back counts as oscillation, doubled for reversal', async () => {
     const { assembleCourse } = await import('../src/search/score');
