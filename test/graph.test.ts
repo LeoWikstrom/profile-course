@@ -48,6 +48,20 @@ describe('edgePenalty', () => {
     expect(fast).toBeGreaterThan(withSidewalk);
   });
 
+  it('a sidewalk on either side counts, including a separately mapped one', () => {
+    const bare = edgePenalty({ highway: 'unclassified' });
+    // Karl IX:s Väg (OSM way 24382790): left side has none, right side is its own way.
+    const karl = edgePenalty({
+      highway: 'unclassified',
+      maxspeed: '40',
+      surface: 'asphalt',
+      'sidewalk:left': 'no',
+      'sidewalk:right': 'separate',
+    });
+    expect(karl).toBeLessThan(bare);
+    expect(edgePenalty({ highway: 'residential', 'sidewalk:left': 'no' })).toBe(bare);
+  });
+
   it('cycleways, designated foot paths and lit ways get a bonus', () => {
     expect(edgePenalty({ highway: 'cycleway' })).toBeLessThan(0);
     expect(edgePenalty({ highway: 'footway', foot: 'designated' })).toBeLessThan(0);

@@ -51,6 +51,7 @@ export function classifySurface(tags: Record<string, string>): SurfaceClass {
 }
 
 const CAR_HIGHWAYS = new Set(['residential', 'unclassified', 'tertiary']);
+const SIDEWALK_KEYS = ['sidewalk', 'sidewalk:both', 'sidewalk:left', 'sidewalk:right'];
 
 export function edgePenalty(tags: Record<string, string>): number {
   const highway = tags['highway'];
@@ -62,9 +63,13 @@ export function edgePenalty(tags: Record<string, string>): number {
   if (highway === 'tertiary') p += 0.4;
 
   if (highway && CAR_HIGHWAYS.has(highway)) {
-    const sidewalk =
-      tags['sidewalk'] ?? tags['sidewalk:left'] ?? tags['sidewalk:right'] ?? tags['sidewalk:both'];
-    if (!sidewalk || sidewalk === 'no' || sidewalk === 'none') p += 0.2;
+    // One side tagged `no` says nothing about the other, and `separate` means
+    // the sidewalk is mapped as its own way — both are still runnable.
+    const hasSidewalk = SIDEWALK_KEYS.some((k) => {
+      const v = tags[k];
+      return v !== undefined && v !== 'no' && v !== 'none';
+    });
+    if (!hasSidewalk) p += 0.2;
     const maxspeed = Number.parseInt(tags['maxspeed'] ?? '', 10);
     if (maxspeed > 50) p += 0.3;
   }
