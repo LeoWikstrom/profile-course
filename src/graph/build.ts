@@ -75,10 +75,186 @@ export function edgePenalty(tags: Record<string, string>): number {
   return Math.max(-0.1, p);
 }
 
+const CONNECTOR_MAX_M = 16;
+const CONNECTOR_PENALTY = 0.15;
+const CONNECTOR_TAG = 'profile:connector';
+
+/**
+ * OSM sidewalks and paths often dead-end a few metres from the street they
+ * meet (no mapped crossing), which both blocks legitimate "cross the
+ * residential street anywhere" routes and gets the stub dead-end pruned.
+ * Synthesize a short connector from every dead-end way endpoint to the
+ * nearest point of a nearby other way, unless a separator (fence, rail,
+ * water) lies between.
+ */
+function connectCrossings(
+  ways: OverpassWay[],
+  separators: OverpassWay[],
+  nodeCoord: Map<number, { lat: number; lon: number }>,
+  usage: Map<number, number>,
+): void {
+  const cosLat = Math.cos(((nodeCoord.values().next().value?.lat ?? 57) * Math.PI) / 180);
+  const CELL = 24;
+
+  // Spatial hash of way segments (and separator segments).
+  interface Seg {
+    wayIdx: number;
+    ax: number; ay: number; bx: number; by: number;
+    aId: number; bId: number;
+  }
+  const segHash = new Map<number, Seg[]>();
+  const sepSegs = new Map<number, [number, number, number, number][]>();
+  const register = (
+    hash: Map<number, unknown[]>,
+    item: unknown,
+    ax: number, ay: number, bx: number, by: number,
+  ) => {
+    const x0 = Math.min(ax, bx) - CELL;
+    const x1 = Math.max(ax, bx) + CELL;
+    const y0 = Math.min(ay, by) - CELL;
+    const y1 = Math.max(ay, by) + CELL;
+    for (let cy = Math.round(y0 / CELL); cy <= Math.round(y1 / CELL); cy++) {
+      for (let cx = Math.round(x0 / CELL); cx <= Math.round(x1 / CELL); cx++) {
+        const key = cy * 1_000_003 + cx;
+        let arr = hash.get(key);
+        if (!arr) hash.set(key, (arr = []));
+        arr.push(item);
+      }
+    }
+  };
+
+  const xyOf = (id: number): [number, number] | null => {
+    const c = nodeCoord.get(id);
+    return c ? toXY(c.lat, c.lon, cosLat) : null;
+  };
+
+  for (let wi = 0; wi < ways.length; wi++) {
+    const nodes = ways[wi]!.nodes;
+    for (let j = 1; j < nodes.length; j++) {
+      const a = xyOf(nodes[j - 1]!);
+      const b = xyOf(nodes[j]!);
+      if (!a || !b) continue;
+      register(segHash as Map<number, unknown[]>, {
+        wayIdx: wi, ax: a[0], ay: a[1], bx: b[0], by: b[1], aId: nodes[j - 1]!, bId: nodes[j]!,
+      }, a[0], a[1], b[0], b[1]);
+    }
+  }
+  for (const sep of separators) {
+    for (let j = 1; j < sep.nodes.length; j++) {
+      const a = xyOf(sep.nodes[j - 1]!);
+      const b = xyOf(sep.nodes[j]!);
+      if (!a || !b) continue;
+      register(sepSegs as unknown as Map<number, unknown[]>, [a[0], a[1], b[0], b[1]], a[0], a[1], b[0], b[1]);
+    }
+  }
+
+  const blocked = (ax: number, ay: number, bx: number, by: number): boolean => {
+    const seen = new Set<[number, number, number, number][]>();
+    for (const cy of [Math.round(ay / CELL), Math.round(by / CELL)]) {
+      for (const cx of [Math.round(ax / CELL), Math.round(bx / CELL)]) {
+        const arr = sepSegs.get(cy * 1_000_003 + cx);
+        if (!arr || seen.has(arr)) continue;
+        seen.add(arr);
+        for (const s of arr) {
+          if (segmentsIntersect(ax, ay, bx, by, s[0], s[1], s[2], s[3])) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  let synthetic = -1;
+  const wayCount = ways.length;
+  for (let wi = 0; wi < wayCount; wi++) {
+    const way = ways[wi]!;
+    const wayNodeSet = new Set(way.nodes);
+    for (const endId of [way.nodes[0]!, way.nodes[way.nodes.length - 1]!]) {
+      if ((usage.get(endId) ?? 0) > 1) continue; // already a junction
+      const e = xyOf(endId);
+      if (!e) continue;
+
+      let best: { seg: Seg; t: number; dist: number } | null = null;
+      const cy0 = Math.round(e[1] / CELL);
+      const cx0 = Math.round(e[0] / CELL);
+      for (let cy = cy0 - 1; cy <= cy0 + 1; cy++) {
+        for (let cx = cx0 - 1; cx <= cx0 + 1; cx++) {
+          const segs = segHash.get(cy * 1_000_003 + cx) as Seg[] | undefined;
+          if (!segs) continue;
+          for (const s of segs) {
+            if (s.wayIdx === wi) continue;
+            if (wayNodeSet.has(s.aId) || wayNodeSet.has(s.bId)) continue;
+            const dx = s.bx - s.ax;
+            const dy = s.by - s.ay;
+            const len2 = dx * dx + dy * dy;
+            const t = len2 > 0 ? Math.max(0, Math.min(1, ((e[0] - s.ax) * dx + (e[1] - s.ay) * dy) / len2)) : 0;
+            const px = s.ax + t * dx;
+            const py = s.ay + t * dy;
+            const dist = Math.hypot(e[0] - px, e[1] - py);
+            if (dist < (best?.dist ?? CONNECTOR_MAX_M) && dist > 0.5) {
+              best = { seg: s, t, dist };
+            }
+          }
+        }
+      }
+      if (!best) continue;
+
+      const { seg, t } = best;
+      const px = seg.ax + t * (seg.bx - seg.ax);
+      const py = seg.ay + t * (seg.by - seg.ay);
+      if (blocked(e[0], e[1], px, py)) continue;
+
+      let targetId: number;
+      if (t < 0.15) targetId = seg.aId;
+      else if (t > 0.85) targetId = seg.bId;
+      else {
+        // Split the target way: insert a new node at the projection point.
+        targetId = synthetic--;
+        const aC = nodeCoord.get(seg.aId)!;
+        const bC = nodeCoord.get(seg.bId)!;
+        nodeCoord.set(targetId, {
+          lat: aC.lat + t * (bC.lat - aC.lat),
+          lon: aC.lon + t * (bC.lon - aC.lon),
+        });
+        const targetWay = ways[seg.wayIdx]!;
+        const insertAt = targetWay.nodes.indexOf(seg.bId, targetWay.nodes.indexOf(seg.aId));
+        if (insertAt <= 0) continue;
+        targetWay.nodes.splice(insertAt, 0, targetId);
+        usage.set(targetId, 1);
+      }
+
+      ways.push({
+        type: 'way',
+        id: synthetic--,
+        nodes: [endId, targetId],
+        tags: { highway: 'footway', [CONNECTOR_TAG]: '1' },
+      });
+      usage.set(endId, (usage.get(endId) ?? 0) + 1);
+      usage.set(targetId, (usage.get(targetId) ?? 0) + 1);
+    }
+  }
+}
+
+/** Local metric coordinates (metres) around a reference latitude. */
+function toXY(lat: number, lon: number, cosLat: number): [number, number] {
+  return [lon * 111320 * cosLat, lat * 111320];
+}
+
+function segmentsIntersect(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
 export function buildGraph(response: OverpassResponse): Graph {
   const nodeCoord = new Map<number, { lat: number; lon: number }>();
   const signalNodes = new Set<number>();
   const ways: OverpassWay[] = [];
+  const separators: OverpassWay[] = [];
   for (const el of response.elements) {
     if (el.type === 'node') {
       nodeCoord.set(el.id, { lat: el.lat, lon: el.lon });
@@ -86,13 +262,20 @@ export function buildGraph(response: OverpassResponse): Graph {
       if (t && (t['highway'] === 'traffic_signals' || t['crossing'] === 'traffic_signals')) {
         signalNodes.add(el.id);
       }
-    } else if (el.type === 'way') ways.push(el);
+    } else if (el.type === 'way') {
+      if (el.tags?.['highway']) ways.push(el);
+      else if (el.tags?.['barrier'] || el.tags?.['railway'] || el.tags?.['waterway']) {
+        separators.push(el);
+      }
+    }
   }
 
   const usage = new Map<number, number>();
   for (const way of ways) {
     for (const id of way.nodes) usage.set(id, (usage.get(id) ?? 0) + 1);
   }
+
+  connectCrossings(ways, separators, nodeCoord, usage);
 
   const graphNodeIndex = new Map<number, number>();
   const nodeLats: number[] = [];
@@ -119,7 +302,9 @@ export function buildGraph(response: OverpassResponse): Graph {
       continue;
     }
     const surface = classifySurface(tags);
-    const penalty = edgePenalty(tags);
+    const penalty = tags[CONNECTOR_TAG]
+      ? Math.max(edgePenalty(tags), CONNECTOR_PENALTY)
+      : edgePenalty(tags);
     let segStart = 0;
     for (let i = 1; i < way.nodes.length; i++) {
       const isLast = i === way.nodes.length - 1;

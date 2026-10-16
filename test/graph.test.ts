@@ -11,6 +11,7 @@ import {
   snapToNode,
 } from '../src/graph/build';
 import { SURFACE_GRAVEL, SURFACE_PAVED, SURFACE_TRAIL, SURFACE_UNKNOWN } from '../src/graph/types';
+import { dijkstra } from '../src/graph/dijkstra';
 
 const skatas = JSON.parse(
   readFileSync('test/fixtures/overpass_skatas_250m.json', 'utf8'),
@@ -272,6 +273,67 @@ describe('traffic signals and corridor cells', () => {
       dirs: [1, linkDir, second.e.a === entry ? 1 : 0],
     });
     expect(course.oscillationFraction).toBeLessThan(0.1);
+  });
+});
+
+describe('crossing connectors (the Virginsgatan case)', () => {
+  // Sidewalk heading south, ending ~8 m north of an east-west street.
+  const base = (extra: OverpassResponse['elements']): OverpassResponse => ({
+    elements: [
+      { type: 'node', id: 1, lat: 57.701, lon: 12.03 }, // sidewalk north end
+      { type: 'node', id: 2, lat: 57.70008, lon: 12.03 }, // sidewalk south end (~8 m from street)
+      { type: 'node', id: 3, lat: 57.7, lon: 12.028 }, // street west
+      { type: 'node', id: 4, lat: 57.7, lon: 12.032 }, // street east
+      { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'footway' } },
+      { type: 'way', id: 11, nodes: [3, 4], tags: { highway: 'residential' } },
+      ...extra,
+    ],
+  });
+
+  it('connects a dead-end sidewalk across to the street', () => {
+    const graph = buildGraph(base([]));
+    const sidewalkEnd = snapToNode(graph, 57.70008, 12.03, 20);
+    const streetWest = snapToNode(graph, 57.7, 12.028, 30);
+    expect(sidewalkEnd).toBeGreaterThanOrEqual(0);
+    expect(streetWest).toBeGreaterThanOrEqual(0);
+    const { dist } = dijkstra(graph, [sidewalkEnd]);
+    expect(dist[streetWest]).toBeLessThan(300); // reachable via the connector
+  });
+
+  it('a fence between blocks the connector', () => {
+    const graph = buildGraph(
+      base([
+        { type: 'node', id: 5, lat: 57.70004, lon: 12.028 },
+        { type: 'node', id: 6, lat: 57.70004, lon: 12.032 },
+        { type: 'way', id: 12, nodes: [5, 6], tags: { barrier: 'fence' } },
+      ]),
+    );
+    const sidewalkEnd = snapToNode(graph, 57.70008, 12.03, 20);
+    const streetWest = snapToNode(graph, 57.7, 12.028, 30);
+    if (sidewalkEnd >= 0 && streetWest >= 0) {
+      const { dist } = dijkstra(graph, [sidewalkEnd]);
+      expect(dist[streetWest]).toBe(Infinity);
+    }
+  });
+
+  it('a 30 m gap is too far to connect', () => {
+    const far: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7013, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.70027, lon: 12.03 }, // ~30 m from street
+        { type: 'node', id: 3, lat: 57.7, lon: 12.028 },
+        { type: 'node', id: 4, lat: 57.7, lon: 12.032 },
+        { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'footway' } },
+        { type: 'way', id: 11, nodes: [3, 4], tags: { highway: 'residential' } },
+      ],
+    };
+    const graph = buildGraph(far);
+    const sidewalkEnd = snapToNode(graph, 57.70027, 12.03, 20);
+    const streetWest = snapToNode(graph, 57.7, 12.028, 30);
+    if (sidewalkEnd >= 0 && streetWest >= 0) {
+      const { dist } = dijkstra(graph, [sidewalkEnd]);
+      expect(dist[streetWest]).toBe(Infinity);
+    }
   });
 });
 

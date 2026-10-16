@@ -39,11 +39,20 @@ export function buildQuery(center: LatLon, radiusMeters: number): string {
   const around = `(around:${Math.round(radiusMeters)},${center.lat.toFixed(6)},${center.lon.toFixed(6)})`;
   // `out body qt` (not skel) on the recursed nodes so node tags like
   // crossing=traffic_signals survive; untagged nodes serialize the same.
-  return `[out:json][timeout:180];(way[highway~"^(${RUNNABLE_HIGHWAYS})$"][access!~"private|no"][foot!=no]${around};);out body;>;out body qt;`;
+  // Barrier/rail/water ways are fetched as "separators": they never become
+  // edges, but they block the synthetic crossing connectors.
+  return (
+    `[out:json][timeout:180];(` +
+    `way[highway~"^(${RUNNABLE_HIGHWAYS})$"][access!~"private|no"][foot!=no]${around};` +
+    `way[barrier]${around};` +
+    `way[railway~"^(rail|tram|light_rail)$"]${around};` +
+    `way[waterway~"^(river|stream|canal|ditch)$"]${around};` +
+    `);out body;>;out body qt;`
+  );
 }
 
 function cacheKey(center: LatLon, radiusMeters: number): string {
-  return `overpass:v3:${center.lat.toFixed(3)},${center.lon.toFixed(3)},${Math.round(radiusMeters / 100)}`;
+  return `overpass:v4:${center.lat.toFixed(3)},${center.lon.toFixed(3)},${Math.round(radiusMeters / 100)}`;
 }
 
 export interface FetchNetworkOptions {
