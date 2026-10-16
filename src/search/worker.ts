@@ -212,18 +212,35 @@ interface SearchOptionsIn {
   viaToleranceKm: number;
 }
 
-const VIA_NEAR_M = 40;
+// 25 m: tight enough that a tap on one of two parallel bridge footpaths
+// (~25-30 m apart) selects that one specifically.
+const VIA_NEAR_M = 25;
 
 /**
- * A via matches graph nodes within 40 m AND edges whose geometry passes
- * within 40 m — long edges (bridge spans) have no nodes mid-span, so node
- * proximity alone wrongly rejected points placed on them.
+ * A via matches graph nodes within VIA_NEAR_M and edges whose geometry passes
+ * within it — measured to the segments themselves, not just their vertices:
+ * long straight spans (Älvsborgsbron) have vertices hundreds of metres apart.
  */
 function resolveVias(
   g: Graph,
   viaPoints: ViaPoint[],
 ): { nodes: Set<number>; edges: Set<number>; dist: Float64Array; kmM: number | null }[] {
   return viaPoints.map((v, i) => {
+    const cosLat = Math.cos((v.lat * Math.PI) / 180);
+    const vx = v.lon * 111320 * cosLat;
+    const vy = v.lat * 111320;
+    const segDist = (aLat: number, aLon: number, bLat: number, bLon: number): number => {
+      const ax = aLon * 111320 * cosLat;
+      const ay = aLat * 111320;
+      const bx = bLon * 111320 * cosLat;
+      const by = bLat * 111320;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((vx - ax) * dx + (vy - ay) * dy) / len2)) : 0;
+      return Math.hypot(vx - (ax + t * dx), vy - (ay + t * dy));
+    };
+
     const nodes = new Set<number>();
     const edges = new Set<number>();
     for (let n = 0; n < g.nodeLat.length; n++) {
@@ -231,8 +248,10 @@ function resolveVias(
     }
     for (let ei = 0; ei < g.edges.length; ei++) {
       const e = g.edges[ei]!;
-      for (let j = 0; j < e.lats.length; j++) {
-        if (haversineMeters(v.lat, v.lon, e.lats[j]!, e.lons[j]!) <= VIA_NEAR_M) {
+      // Cheap bbox reject before exact segment distances.
+      if (haversineMeters(v.lat, v.lon, e.lats[0]!, e.lons[0]!) > e.lengthM + VIA_NEAR_M) continue;
+      for (let j = 1; j < e.lats.length; j++) {
+        if (segDist(e.lats[j - 1]!, e.lons[j - 1]!, e.lats[j]!, e.lons[j]!) <= VIA_NEAR_M) {
           edges.add(ei);
           nodes.add(e.a);
           nodes.add(e.b);
