@@ -55,9 +55,10 @@ function collectWeights(): Record<string, number> | null {
     const v = Number(el.value);
     if (Number.isFinite(v)) out[f] = v;
   }
-  // Dense turns and far repeats scale with their main sliders.
+  // Dense turns and far repeats scale with their main sliders. Repeat tracks
+  // oscillation at the default 30:80 ratio (laps were nearly free at 10).
   if (out['turns'] !== undefined) out['denseTurns'] = out['turns'];
-  if (out['oscillation'] !== undefined) out['repeat'] = out['oscillation'] / 8;
+  if (out['oscillation'] !== undefined) out['repeat'] = (out['oscillation'] * 3) / 8;
   return out;
 }
 const distanceInput = document.getElementById('distance-input') as HTMLInputElement;
@@ -207,6 +208,8 @@ function startSearch(): void {
     startAtPoint: !startAnywhereToggle.checked || returnToggle.checked,
     weights: collectWeights(),
     connectors: connectorsToggle.checked,
+    beamWidth:
+      Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
   });
 }
 

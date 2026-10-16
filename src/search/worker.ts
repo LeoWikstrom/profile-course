@@ -205,6 +205,7 @@ interface SearchOptionsIn {
   startAtPoint: boolean;
   weights: Record<string, number> | null;
   connectors: boolean;
+  beamWidth: number;
 }
 
 async function search(
@@ -264,9 +265,7 @@ async function search(
         })
       : await beamSearch(g, startNode, profile, targetLengthMeters, {
           seed,
-          // Benchmarked: width 400 scored worse than 200 for multi-start
-          // (52.3 vs 44.8) at 2.5x the runtime. Keep the default.
-          beamWidth: 200,
+          beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           weights,
@@ -415,6 +414,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         startAtPoint: msg.startAtPoint,
         weights: msg.weights,
         connectors: msg.connectors,
+        beamWidth: msg.beamWidth,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),

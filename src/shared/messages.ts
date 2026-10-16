@@ -67,6 +67,8 @@ export type MainToWorker =
       weights: Record<string, number> | null;
       /** Synthesize informal street crossings (experimental, slower). */
       connectors: boolean;
+      /** Beam width (search effort); default 200. */
+      beamWidth: number;
     }
   | {
       /** Map-match an uploaded course and score it against the target. */
