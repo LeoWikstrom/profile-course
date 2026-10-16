@@ -77,10 +77,16 @@ export function edgePenalty(tags: Record<string, string>): number {
 
 export function buildGraph(response: OverpassResponse): Graph {
   const nodeCoord = new Map<number, { lat: number; lon: number }>();
+  const signalNodes = new Set<number>();
   const ways: OverpassWay[] = [];
   for (const el of response.elements) {
-    if (el.type === 'node') nodeCoord.set(el.id, { lat: el.lat, lon: el.lon });
-    else if (el.type === 'way') ways.push(el);
+    if (el.type === 'node') {
+      nodeCoord.set(el.id, { lat: el.lat, lon: el.lon });
+      const t = el.tags;
+      if (t && (t['highway'] === 'traffic_signals' || t['crossing'] === 'traffic_signals')) {
+        signalNodes.add(el.id);
+      }
+    } else if (el.type === 'way') ways.push(el);
   }
 
   const usage = new Map<number, number>();
@@ -146,7 +152,14 @@ export function buildGraph(response: OverpassResponse): Graph {
       const bridge = tags['bridge'];
       const tunnel = tags['tunnel'];
       const ele = Number.parseFloat(tags['ele'] ?? '');
+      let signals = 0;
+      for (const id of segIds) {
+        if (signalNodes.has(id)) signals++;
+      }
       edges.push({
+        signals,
+        cellIds: null,
+        cellHead: null,
         eleTag: Number.isFinite(ele) ? ele : null,
         a,
         b,
@@ -447,6 +460,20 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
   const elev = await sampler.elevations(lats, lons);
   offset = 0;
   for (const { edge, count } of pending) {
+    // Corridor cells: ~14 m grid + local heading per sample, for detecting
+    // out-and-backs over parallel twin paths that are distinct edges.
+    const cellIds = new Int32Array(count);
+    const cellHead = new Float32Array(count);
+    for (let k = 0; k < count; k++) {
+      const la = lats[offset + k]!;
+      const lo = lons[offset + k]!;
+      cellIds[k] = Math.round((la * 111320) / 14) * 1_000_003 + Math.round((lo * 58000) / 14);
+      const k2 = Math.min(k + 1, count - 1);
+      const k1 = k2 === k ? k - 1 : k;
+      cellHead[k] = bearingDeg(lats[offset + k1]!, lons[offset + k1]!, lats[offset + k2]!, lons[offset + k2]!);
+    }
+    edge.cellIds = cellIds;
+    edge.cellHead = cellHead;
     const raw = elev.subarray(offset, offset + count);
     if (edge.levelled && edge.eleTag !== null) {
       // Keep the raw DEM for now; shapeBridgeChains replaces it with the

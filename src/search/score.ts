@@ -26,6 +26,8 @@ export interface Weights {
   turns: number;
   /** Per dense turn (within 100 m of the previous turn) per km. */
   denseTurns: number;
+  /** Per signalized crossing per km (0 = ignore traffic lights). */
+  trafficLights: number;
   /**
    * Worst local shape mismatch: max over 500 m windows of offset-corrected
    * RMSE. Catches a spike where the target is flat, which global RMSE and
@@ -47,6 +49,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   oscillation: 80,
   turns: 2,
   denseTurns: 2,
+  trafficLights: 0,
   localShape: 6,
 };
 
@@ -96,6 +99,7 @@ export interface AssembledCourse {
   oscillationFraction: number;
   turnsPerKm: number;
   denseTurnsPerKm: number;
+  signalsPerKm: number;
 }
 
 export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse {
@@ -118,6 +122,9 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   const turnDists: number[] = [];
   let prevExitHead = Number.NaN;
   let distSoFar = 0;
+  let signalCount = 0;
+  /** Corridor cell -> last pass {heading, course distance, edge}. */
+  const corridor = new Map<number, { head: number; dist: number; edge: number }>();
 
   let w = 0;
   let first = true;
@@ -150,6 +157,32 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
+    signalCount += e.signals;
+
+    // Corridor check: reversing along a parallel twin path (bike + foot side
+    // by side) is an out-and-back even though the edges differ. ~14 m cells
+    // keep opposite street sidewalks (15-20 m apart) distinct.
+    if (e.cellIds && e.cellHead) {
+      const m2 = e.cellIds.length;
+      const spacing = e.lengthM / Math.max(1, m2 - 1);
+      for (let k = 0; k < m2; k++) {
+        const idx = forward ? k : m2 - 1 - k;
+        const cell = e.cellIds[idx]!;
+        const head = forward ? e.cellHead[idx]! : (e.cellHead[idx]! + 180) % 360;
+        const d = distSoFar + k * spacing;
+        const prevPass = corridor.get(cell);
+        if (
+          prevPass &&
+          prevPass.edge !== ei && // same-edge reuse is handled below
+          d - prevPass.dist < OSCILLATION_WINDOW_M &&
+          Math.abs(angleDiffDeg(prevPass.head, head)) > 135
+        ) {
+          oscillationLen += 2 * spacing;
+        }
+        corridor.set(cell, { head, dist: d, edge: ei });
+      }
+    }
+
     const dir = forward ? 1 : 0;
     const prev = used.get(ei);
     if (prev !== undefined) {
@@ -186,6 +219,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     oscillationFraction: lengthM > 0 ? oscillationLen / lengthM : 0,
     turnsPerKm: turnDists.length / km,
     denseTurnsPerKm: denseTurns / km,
+    signalsPerKm: signalCount / km,
   };
 }
 
@@ -313,6 +347,7 @@ export function scoreCourse(
     weights.oscillation * course.oscillationFraction +
     weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm) +
     weights.denseTurns * course.denseTurnsPerKm +
+    weights.trafficLights * course.signalsPerKm +
     weights.localShape * worstWindowShapeError(course.samples, target.samples)
   );
 }

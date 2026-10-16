@@ -8,6 +8,8 @@ export interface OverpassNode {
   id: number;
   lat: number;
   lon: number;
+  /** Present when the node carries tags (e.g. crossing=traffic_signals). */
+  tags?: Record<string, string>;
 }
 
 export interface OverpassWay {
@@ -35,11 +37,13 @@ const RUNNABLE_HIGHWAYS =
 // single query clause keeps the server-side cost down.
 export function buildQuery(center: LatLon, radiusMeters: number): string {
   const around = `(around:${Math.round(radiusMeters)},${center.lat.toFixed(6)},${center.lon.toFixed(6)})`;
-  return `[out:json][timeout:180];(way[highway~"^(${RUNNABLE_HIGHWAYS})$"][access!~"private|no"][foot!=no]${around};);out body;>;out skel qt;`;
+  // `out body qt` (not skel) on the recursed nodes so node tags like
+  // crossing=traffic_signals survive; untagged nodes serialize the same.
+  return `[out:json][timeout:180];(way[highway~"^(${RUNNABLE_HIGHWAYS})$"][access!~"private|no"][foot!=no]${around};);out body;>;out body qt;`;
 }
 
 function cacheKey(center: LatLon, radiusMeters: number): string {
-  return `overpass:v2:${center.lat.toFixed(3)},${center.lon.toFixed(3)},${Math.round(radiusMeters / 100)}`;
+  return `overpass:v3:${center.lat.toFixed(3)},${center.lon.toFixed(3)},${Math.round(radiusMeters / 100)}`;
 }
 
 export interface FetchNetworkOptions {

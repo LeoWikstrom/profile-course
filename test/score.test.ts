@@ -35,6 +35,7 @@ function courseFrom(samples: Float32Array): AssembledCourse {
     oscillationFraction: 0,
     turnsPerKm: 0,
     denseTurnsPerKm: 0,
+    signalsPerKm: 0,
   };
 }
 

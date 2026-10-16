@@ -138,6 +138,10 @@ button:not(:disabled) {
   flex: 1;
 }
 
+#course-actions {
+  margin-bottom: 14px;
+}
+
 progress {
   width: 100%;
   height: 8px;

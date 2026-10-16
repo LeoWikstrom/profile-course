@@ -157,6 +157,124 @@ describe('bridge and tunnel handling', () => {
   });
 });
 
+describe('traffic signals and corridor cells', () => {
+  it('counts signalized crossings per edge', () => {
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.701, lon: 12.03, tags: { crossing: 'traffic_signals' } },
+        { type: 'node', id: 3, lat: 57.702, lon: 12.03 },
+        { type: 'way', id: 10, nodes: [1, 2, 3], tags: { highway: 'footway' } },
+      ],
+    };
+    const graph = buildGraph(response);
+    expect(graph.edges[0]!.signals).toBe(1);
+  });
+
+  it('reversing along a parallel twin path counts as oscillation', async () => {
+    const { sampleEdgeElevations } = await import('../src/graph/build');
+    const { assembleCourse } = await import('../src/search/score');
+    const { TerrainSampler } = await import('../src/net/terrain');
+    // Two ~330 m paths, 3 m apart (bike + foot), sharing endpoints via
+    // connector nodes; up one and back down the other.
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.703, lon: 12.03 },
+        { type: 'node', id: 3, lat: 57.7, lon: 12.03005 }, // ~3 m east
+        { type: 'node', id: 4, lat: 57.703, lon: 12.03005 },
+        { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'cycleway' } },
+        { type: 'way', id: 11, nodes: [3, 4], tags: { highway: 'footway' } },
+        { type: 'way', id: 12, nodes: [1, 3], tags: { highway: 'footway' } },
+        { type: 'way', id: 13, nodes: [2, 4], tags: { highway: 'footway' } },
+      ],
+    };
+    class Flat extends TerrainSampler {
+      constructor() {
+        super(13, () => {
+          throw new Error('no network');
+        });
+      }
+      override async elevations(lats: ArrayLike<number>): Promise<Float32Array> {
+        return new Float32Array(lats.length).fill(5);
+      }
+    }
+    const graph = buildGraph(response);
+    await sampleEdgeElevations(graph, new Flat());
+    const up = graph.edges.findIndex((e) => e.surface === 0 && e.lengthM > 200 && e.lats[0] !== e.lats[1]);
+    const bike = graph.edges.findIndex((e) => e.lengthM > 200);
+    const foot = graph.edges.findIndex((e, i) => e.lengthM > 200 && i !== bike);
+    const link = graph.edges.findIndex((e) => e.lengthM < 50);
+    expect(bike).toBeGreaterThanOrEqual(0);
+    expect(foot).toBeGreaterThanOrEqual(0);
+    expect(link).toBeGreaterThanOrEqual(0);
+    void up;
+
+    // Orient: bike a->b, cross the link, foot back.
+    const eBike = graph.edges[bike]!;
+    const eFoot = graph.edges[foot]!;
+    const eLink = graph.edges.find(
+      (e) => e.lengthM < 50 && (e.a === eBike.b || e.b === eBike.b),
+    )!;
+    const linkIdx = graph.edges.indexOf(eLink);
+    const bikeDir = 1; // a->b
+    const linkDir = eLink.a === eBike.b ? 1 : 0;
+    const footEntry = eLink.a === eBike.b ? eLink.b : eLink.a;
+    const footDir = eFoot.a === footEntry ? 1 : 0;
+    const course = assembleCourse(graph, {
+      edges: [bike, linkIdx, foot],
+      dirs: [bikeDir, linkDir, footDir],
+    });
+    expect(course.oscillationFraction).toBeGreaterThan(0.5);
+  });
+
+  it('opposite sidewalks ~18 m apart are not the same corridor', async () => {
+    const { sampleEdgeElevations } = await import('../src/graph/build');
+    const { assembleCourse } = await import('../src/search/score');
+    const { TerrainSampler } = await import('../src/net/terrain');
+    const response: OverpassResponse = {
+      elements: [
+        { type: 'node', id: 1, lat: 57.7, lon: 12.03 },
+        { type: 'node', id: 2, lat: 57.703, lon: 12.03 },
+        { type: 'node', id: 3, lat: 57.7, lon: 12.0303 }, // ~18 m east
+        { type: 'node', id: 4, lat: 57.703, lon: 12.0303 },
+        { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'footway' } },
+        { type: 'way', id: 11, nodes: [3, 4], tags: { highway: 'footway' } },
+        { type: 'way', id: 12, nodes: [1, 3], tags: { highway: 'footway' } },
+        { type: 'way', id: 13, nodes: [2, 4], tags: { highway: 'footway' } },
+      ],
+    };
+    class Flat extends TerrainSampler {
+      constructor() {
+        super(13, () => {
+          throw new Error('no network');
+        });
+      }
+      override async elevations(lats: ArrayLike<number>): Promise<Float32Array> {
+        return new Float32Array(lats.length).fill(5);
+      }
+    }
+    const graph = buildGraph(response);
+    await sampleEdgeElevations(graph, new Flat());
+    const sides = graph.edges
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.lengthM > 200);
+    const links = graph.edges
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.lengthM < 50);
+    const first = sides[0]!;
+    const eLink = links.find(({ e }) => e.a === first.e.b || e.b === first.e.b)!;
+    const second = sides[1]!;
+    const linkDir = eLink.e.a === first.e.b ? 1 : 0;
+    const entry = eLink.e.a === first.e.b ? eLink.e.b : eLink.e.a;
+    const course = assembleCourse(graph, {
+      edges: [first.i, eLink.i, second.i],
+      dirs: [1, linkDir, second.e.a === entry ? 1 : 0],
+    });
+    expect(course.oscillationFraction).toBeLessThan(0.1);
+  });
+});
+
 describe('buildGraph on the Skatås fixture', () => {
   const graph = buildGraph(skatas);
 

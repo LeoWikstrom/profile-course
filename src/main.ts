@@ -38,7 +38,15 @@ const seedInput = document.getElementById('seed-input') as HTMLInputElement;
 const coordLat = document.getElementById('coord-lat') as HTMLInputElement;
 const coordLon = document.getElementById('coord-lon') as HTMLInputElement;
 const coordSet = document.getElementById('coord-set') as HTMLButtonElement;
-const WEIGHT_FIELDS = ['localShape', 'gainLoss', 'turns', 'surface', 'penalty', 'oscillation'];
+const WEIGHT_FIELDS = [
+  'localShape',
+  'gainLoss',
+  'turns',
+  'surface',
+  'penalty',
+  'oscillation',
+  'trafficLights',
+];
 
 function collectWeights(): Record<string, number> | null {
   const out: Record<string, number> = {};

@@ -25,6 +25,15 @@ export interface GraphEdge {
   eleTag: number | null;
   /** Distances (m from the a-end) of internal turns along the edge geometry. */
   turnOffsets: Float64Array;
+  /** Signalized crossings on this edge (OSM traffic_signals nodes). */
+  signals: number;
+  /**
+   * ~14 m grid cell id and local heading per 25 m sample (a→b), filled by
+   * sampleEdgeElevations. Used to detect out-and-backs over parallel twin
+   * paths (bike + foot) that edge identity cannot see.
+   */
+  cellIds: Int32Array | null;
+  cellHead: Float32Array | null;
   /** Heading when entering at a / leaving at b, degrees; NaN for degenerate geometry. */
   headOutA: number;
   headInB: number;
