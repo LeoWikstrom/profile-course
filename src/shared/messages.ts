@@ -65,6 +65,8 @@ export type MainToWorker =
       startAtPoint: boolean;
       /** Overrides merged over DEFAULT_WEIGHTS (advanced settings). */
       weights: Record<string, number> | null;
+      /** Synthesize informal street crossings (experimental, slower). */
+      connectors: boolean;
     }
   | {
       /** Map-match an uploaded course and score it against the target. */

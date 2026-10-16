@@ -67,6 +67,7 @@ const rangeTo = document.getElementById('range-to') as HTMLInputElement;
 const surfaceSelect = document.getElementById('surface-select') as HTMLSelectElement;
 const returnToggle = document.getElementById('return-toggle') as HTMLInputElement;
 const startAnywhereToggle = document.getElementById('start-anywhere') as HTMLInputElement;
+const connectorsToggle = document.getElementById('connectors-toggle') as HTMLInputElement;
 const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
 const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
 const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
@@ -205,6 +206,7 @@ function startSearch(): void {
     returnToStart: returnToggle.checked,
     startAtPoint: !startAnywhereToggle.checked || returnToggle.checked,
     weights: collectWeights(),
+    connectors: connectorsToggle.checked,
   });
 }
 

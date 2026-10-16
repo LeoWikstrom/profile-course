@@ -104,6 +104,11 @@
           <label class="control"><span>Traffic lights (per signalized crossing/km; 0 = ignore)</span>
             <input type="number" id="w-trafficLights" value="0" min="0" step="1" /></label>
           <label class="control checkbox">
+            <input type="checkbox" id="connectors-toggle" />
+            <span>Informal street crossings (experimental: lets courses cross residential
+              streets anywhere; slower and can reduce course quality)</span>
+          </label>
+          <label class="control checkbox">
             <input type="checkbox" id="start-anywhere" />
             <span>Start anywhere in the zone (takes more compute time; does not guarantee a
               better course)</span>

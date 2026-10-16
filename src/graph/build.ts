@@ -178,9 +178,15 @@ function connectCrossings(
 
   let synthetic = -1;
   const wayCount = ways.length;
+  const wayNodeSets = new Map<number, Set<number>>();
+  const nodeSetOf = (wi: number): Set<number> => {
+    let s = wayNodeSets.get(wi);
+    if (!s) wayNodeSets.set(wi, (s = new Set(ways[wi]!.nodes)));
+    return s;
+  };
   for (let wi = 0; wi < wayCount; wi++) {
     const way = ways[wi]!;
-    const wayNodeSet = new Set(way.nodes);
+    const wayNodeSet = nodeSetOf(wi);
     for (const endId of [way.nodes[0]!, way.nodes[way.nodes.length - 1]!]) {
       if ((usage.get(endId) ?? 0) > 1) continue; // already a junction
       const e = xyOf(endId);
@@ -196,7 +202,18 @@ function connectCrossings(
           for (const s of segs) {
             if (s.wayIdx === wi) continue;
             if (!CONNECTOR_TARGETS.has(ways[s.wayIdx]!.tags?.['highway'] ?? '')) continue;
-            if (wayNodeSet.has(s.aId) || wayNodeSet.has(s.bId)) continue;
+            // Skip when the two ways already meet anywhere (the sidewalk
+            // typically joins the street at the corner) — such connectors are
+            // redundant and flooded the graph with tiny edges.
+            let shares = false;
+            const targetSet = nodeSetOf(s.wayIdx);
+            for (const id of wayNodeSet) {
+              if (targetSet.has(id)) {
+                shares = true;
+                break;
+              }
+            }
+            if (shares) continue;
             const dx = s.bx - s.ax;
             const dy = s.by - s.ay;
             const len2 = dx * dx + dy * dy;
@@ -218,8 +235,10 @@ function connectCrossings(
       if (blocked(e[0], e[1], px, py)) continue;
 
       let targetId: number;
-      if (t < 0.15) targetId = seg.aId;
-      else if (t > 0.85) targetId = seg.bId;
+      // Prefer snapping to an existing vertex over splitting the way: splits
+      // multiply tiny edges, which measurably starves the beam.
+      if (t < 0.3) targetId = seg.aId;
+      else if (t > 0.7) targetId = seg.bId;
       else {
         // Split the target way: insert a new node at the projection point.
         targetId = synthetic--;

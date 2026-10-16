@@ -94,11 +94,12 @@ async function ensurePrepared(
   start: LatLon,
   radiusMeters: number,
   targetLengthMeters: number,
+  connectors = false,
 ): Promise<void> {
   // The radius is only the start/finish zone. A course of length L can reach
   // about L/2 out before it has to head back.
   const graphRadius = Math.min(radiusMeters + targetLengthMeters / 2, MAX_GRAPH_RADIUS_M);
-  const key = `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)},${Math.round(graphRadius)}`;
+  const key = `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)},${Math.round(graphRadius)},${connectors ? 'c' : ''}`;
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
@@ -122,7 +123,7 @@ async function ensurePrepared(
     post({ type: 'progress', stage: 'using offline area', fraction: 0.1, bestScore: null });
   }
   post({ type: 'progress', stage: 'building graph', fraction: 0.15, bestScore: null });
-  const full = buildGraph(response);
+  const full = buildGraph(response, { connectors });
   const snapped = snapToNode(full, start.lat, start.lon);
   if (snapped < 0) {
     throw new Error('No path or road found within 100 m of the start point');
@@ -203,6 +204,7 @@ interface SearchOptionsIn {
   returnToStart: boolean;
   startAtPoint: boolean;
   weights: Record<string, number> | null;
+  connectors: boolean;
 }
 
 async function search(
@@ -216,7 +218,7 @@ async function search(
 ): Promise<void> {
   cancelled = false;
   const t0 = performance.now();
-  await ensurePrepared(start, radiusMeters, targetLengthMeters);
+  await ensurePrepared(start, radiusMeters, targetLengthMeters, opts.connectors);
   const g = graph!;
   const profile: TargetProfile = target;
   const tGraph = performance.now();
