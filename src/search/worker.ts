@@ -414,6 +414,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         returnToStart: msg.returnToStart,
         startAtPoint: msg.startAtPoint,
         weights: msg.weights,
+        connectors: msg.connectors,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
