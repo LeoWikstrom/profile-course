@@ -23,6 +23,7 @@ import type {
 } from '../shared/messages';
 import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
+import { reroutePath } from './edit';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
@@ -399,6 +400,10 @@ async function search(
   });
   if (cancelled) return;
 
+  // Keep the winner editable/improvable like a matched course.
+  matchedPath = improved[0]!.path;
+  matchedKey = preparedKey;
+
   const tDone = performance.now();
   console.log(
     `search timings (${algorithm}): prepare ${(tGraph - t0).toFixed(0)} ms, ` +
@@ -455,6 +460,42 @@ async function matchCourse(
       scoreBreakdown(course, target, desiredMix ?? MIX_ROAD, weights),
     ),
     snappedFraction,
+    improvable: true,
+  });
+}
+
+async function editCourse(
+  atKm: number,
+  to: LatLon,
+  target: TargetTransfer,
+  desiredMix: [number, number, number, number] | null,
+  weightsIn: Record<string, number> | null,
+): Promise<void> {
+  if (!matchedPath || !graph || matchedKey !== preparedKey) {
+    throw new Error('No course in memory to edit — generate or match one first.');
+  }
+  const g = graph;
+  const targetNode = snapToNode(g, to.lat, to.lon, 60);
+  if (targetNode < 0) {
+    throw new Error('No path within 60 m of the tapped point');
+  }
+  const newPath = reroutePath(g, matchedPath, atKm * 1000, targetNode);
+  if (!newPath) {
+    throw new Error('Could not route the course through that point');
+  }
+  const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
+  const course = assembleCourse(g, newPath);
+  const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
+  matchedPath = newPath;
+  post({
+    type: 'matched',
+    course: toResult(
+      g,
+      { path: newPath, course, score },
+      0,
+      scoreBreakdown(course, target, desiredMix ?? MIX_ROAD, weights),
+    ),
+    snappedFraction: 1,
     improvable: true,
   });
 }
@@ -541,6 +582,11 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       matchCourse(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    case 'editCourse':
+      editCourse(msg.atKm, msg.to, msg.target, msg.desiredMix, msg.weights).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'improveCourse':

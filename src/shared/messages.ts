@@ -91,6 +91,15 @@ export type MainToWorker =
       weights: Record<string, number> | null;
     }
   | {
+      /** Reroute the current course so it passes through `to` near `atKm`. */
+      type: 'editCourse';
+      atKm: number;
+      to: LatLon;
+      target: TargetTransfer;
+      desiredMix: [number, number, number, number] | null;
+      weights: Record<string, number> | null;
+    }
+  | {
       /** Run the improvement pass on the last matched course. */
       type: 'improveCourse';
       target: TargetTransfer;

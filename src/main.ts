@@ -125,7 +125,43 @@ function showResult(
         startSearch();
       },
     },
+    () => startEdit(result),
   );
+}
+
+/** Two-tap reroute: tap a course point, then tap where it should go instead. */
+function startEdit(result: { course: CourseResult; profile: TargetProfile }): void {
+  startHint.textContent = 'Edit: tap a point ON the course…';
+  map.armViaPlacement((p1) => {
+    // Nearest course sample to the first tap → the km being edited.
+    const points = result.course.exportPoints;
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const d =
+        (points[i]!.lat - p1.lat) * (points[i]!.lat - p1.lat) +
+        (points[i]!.lon - p1.lon) * (points[i]!.lon - p1.lon);
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    const atKm = (bestI * 25) / 1000;
+    map.showCoursePoint(points[bestI]!);
+    startHint.textContent = `Edit: rerouting near km ${atKm.toFixed(1)} — now tap where the course should go…`;
+    map.armViaPlacement((p2) => {
+      map.hideCoursePoint();
+      startHint.textContent = 'Rerouting…';
+      send({
+        type: 'editCourse',
+        atKm,
+        to: p2,
+        target: targetTransfer(result.profile),
+        desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
+        weights: collectWeights(),
+      });
+    });
+  });
 }
 
 /** The profile actually searched for: the race window, rebased. */
@@ -433,6 +469,20 @@ function renderVias(): void {
       targetChart.addEventListener('pointerdown', onTap, true);
     });
     li.appendChild(pick);
+    if (i > 0) {
+      const up = document.createElement('button');
+      up.textContent = '↑';
+      up.title = 'Move earlier in the order';
+      up.style.width = 'auto';
+      up.style.minHeight = '28px';
+      up.style.marginLeft = '8px';
+      up.addEventListener('click', () => {
+        [viaPoints[i - 1], viaPoints[i]] = [viaPoints[i]!, viaPoints[i - 1]!];
+        renderVias();
+        persistSession();
+      });
+      li.appendChild(up);
+    }
     const del = document.createElement('button');
     del.textContent = '×';
     del.style.width = 'auto';

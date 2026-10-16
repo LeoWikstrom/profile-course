@@ -19,6 +19,7 @@ export function renderResult(
   els: ResultElements,
   course: CourseResult,
   action: { label: string; onAction: () => void },
+  onEdit?: () => void,
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
@@ -58,6 +59,14 @@ export function renderResult(
   actionButton.textContent = action.label;
   actionButton.addEventListener('click', action.onAction);
   els.actions.appendChild(actionButton);
+
+  if (onEdit) {
+    const edit = document.createElement('button');
+    edit.textContent = 'Edit';
+    edit.title = 'Tap a point on the course, then tap where it should go instead';
+    edit.addEventListener('click', onEdit);
+    els.actions.appendChild(edit);
+  }
 
   const copyLink = document.createElement('button');
   copyLink.textContent = 'Copy link';
