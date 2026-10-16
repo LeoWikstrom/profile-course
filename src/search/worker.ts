@@ -23,7 +23,7 @@ import type {
 } from '../shared/messages';
 import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
-import { reroutePath } from './edit';
+import { DEFAULT_WINDOW_M, reroutePath } from './edit';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
@@ -217,52 +217,60 @@ interface SearchOptionsIn {
 // (~25-30 m apart) selects that one specifically.
 const VIA_NEAR_M = 25;
 
+/** How far an edit's destination tap may be from a path before it is rejected. */
+const EDIT_SNAP_M = 60;
+
 /**
  * A via matches graph nodes within VIA_NEAR_M and edges whose geometry passes
  * within it — measured to the segments themselves, not just their vertices:
  * long straight spans (Älvsborgsbron) have vertices hundreds of metres apart.
  */
+function matchVia(g: Graph, v: LatLon, index: number): { nodes: Set<number>; edges: Set<number> } {
+  const cosLat = Math.cos((v.lat * Math.PI) / 180);
+  const vx = v.lon * 111320 * cosLat;
+  const vy = v.lat * 111320;
+  const segDist = (aLat: number, aLon: number, bLat: number, bLon: number): number => {
+    const ax = aLon * 111320 * cosLat;
+    const ay = aLat * 111320;
+    const bx = bLon * 111320 * cosLat;
+    const by = bLat * 111320;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((vx - ax) * dx + (vy - ay) * dy) / len2)) : 0;
+    return Math.hypot(vx - (ax + t * dx), vy - (ay + t * dy));
+  };
+
+  const nodes = new Set<number>();
+  const edges = new Set<number>();
+  for (let n = 0; n < g.nodeLat.length; n++) {
+    if (haversineMeters(v.lat, v.lon, g.nodeLat[n]!, g.nodeLon[n]!) <= VIA_NEAR_M) nodes.add(n);
+  }
+  for (let ei = 0; ei < g.edges.length; ei++) {
+    const e = g.edges[ei]!;
+    // Cheap bbox reject before exact segment distances.
+    if (haversineMeters(v.lat, v.lon, e.lats[0]!, e.lons[0]!) > e.lengthM + VIA_NEAR_M) continue;
+    for (let j = 1; j < e.lats.length; j++) {
+      if (segDist(e.lats[j - 1]!, e.lons[j - 1]!, e.lats[j]!, e.lons[j]!) <= VIA_NEAR_M) {
+        edges.add(ei);
+        nodes.add(e.a);
+        nodes.add(e.b);
+        break;
+      }
+    }
+  }
+  if (nodes.size === 0) {
+    throw new Error(`Via point ${index + 1} is more than ${VIA_NEAR_M} m from any path`);
+  }
+  return { nodes, edges };
+}
+
 function resolveVias(
   g: Graph,
   viaPoints: ViaPoint[],
 ): { nodes: Set<number>; edges: Set<number>; dist: Float64Array; kmM: number | null }[] {
   return viaPoints.map((v, i) => {
-    const cosLat = Math.cos((v.lat * Math.PI) / 180);
-    const vx = v.lon * 111320 * cosLat;
-    const vy = v.lat * 111320;
-    const segDist = (aLat: number, aLon: number, bLat: number, bLon: number): number => {
-      const ax = aLon * 111320 * cosLat;
-      const ay = aLat * 111320;
-      const bx = bLon * 111320 * cosLat;
-      const by = bLat * 111320;
-      const dx = bx - ax;
-      const dy = by - ay;
-      const len2 = dx * dx + dy * dy;
-      const t = len2 > 0 ? Math.max(0, Math.min(1, ((vx - ax) * dx + (vy - ay) * dy) / len2)) : 0;
-      return Math.hypot(vx - (ax + t * dx), vy - (ay + t * dy));
-    };
-
-    const nodes = new Set<number>();
-    const edges = new Set<number>();
-    for (let n = 0; n < g.nodeLat.length; n++) {
-      if (haversineMeters(v.lat, v.lon, g.nodeLat[n]!, g.nodeLon[n]!) <= VIA_NEAR_M) nodes.add(n);
-    }
-    for (let ei = 0; ei < g.edges.length; ei++) {
-      const e = g.edges[ei]!;
-      // Cheap bbox reject before exact segment distances.
-      if (haversineMeters(v.lat, v.lon, e.lats[0]!, e.lons[0]!) > e.lengthM + VIA_NEAR_M) continue;
-      for (let j = 1; j < e.lats.length; j++) {
-        if (segDist(e.lats[j - 1]!, e.lons[j - 1]!, e.lats[j]!, e.lons[j]!) <= VIA_NEAR_M) {
-          edges.add(ei);
-          nodes.add(e.a);
-          nodes.add(e.b);
-          break;
-        }
-      }
-    }
-    if (nodes.size === 0) {
-      throw new Error(`Via point ${i + 1} is more than ${VIA_NEAR_M} m from any path`);
-    }
+    const { nodes, edges } = matchVia(g, v, i);
     return {
       nodes,
       edges,
@@ -270,6 +278,18 @@ function resolveVias(
       kmM: v.km !== null ? v.km * 1000 : null,
     };
   });
+}
+
+/** Nodes and edges an edit must not cut out of the course. */
+function viaKeepSets(g: Graph, viaPoints: ViaPoint[]): { nodes: Set<number>; edges: Set<number> } {
+  const nodes = new Set<number>();
+  const edges = new Set<number>();
+  viaPoints.forEach((v, i) => {
+    const m = matchVia(g, v, i);
+    for (const n of m.nodes) nodes.add(n);
+    for (const e of m.edges) edges.add(e);
+  });
+  return { nodes, edges };
 }
 
 /** True when the path visits every via (node or traversed edge) in order. */
@@ -500,16 +520,27 @@ async function editCourse(
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
   resync: boolean,
+  viaPoints: ViaPoint[],
+  windowM: number,
 ): Promise<void> {
   const currentPath = await ensureCurrentPath(lats, lons, resync);
   const g = graph!;
-  const targetNode = snapToNode(g, to.lat, to.lon, 60);
+  const targetNode = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
   if (targetNode < 0) {
-    throw new Error('No path within 60 m of the tapped point');
+    throw new Error(`No path within ${EDIT_SNAP_M} m of the tapped point`);
   }
-  const newPath = reroutePath(g, currentPath, atKm * 1000, targetNode);
+  const keep = viaKeepSets(g, viaPoints);
+  const newPath = reroutePath(g, currentPath, atKm * 1000, targetNode, {
+    windowM,
+    keepNodes: keep.nodes,
+    keepEdges: keep.edges,
+  });
   if (!newPath) {
-    throw new Error('Could not route the course through that point');
+    throw new Error(
+      keep.nodes.size > 0
+        ? 'Could not route through that point without dropping a via point'
+        : 'Could not route the course through that point',
+    );
   }
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
   const course = assembleCourse(g, newPath);
@@ -614,9 +645,19 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       );
       break;
     case 'editCourse':
-      editCourse(msg.atKm, msg.to, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights, msg.resync ?? false).catch(
-        (err: unknown) =>
-          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      editCourse(
+        msg.atKm,
+        msg.to,
+        msg.lats,
+        msg.lons,
+        msg.target,
+        msg.desiredMix,
+        msg.weights,
+        msg.resync ?? false,
+        msg.viaPoints ?? [],
+        msg.rerouteWindowM ?? DEFAULT_WINDOW_M,
+      ).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'improveCourse':

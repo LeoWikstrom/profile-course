@@ -90,9 +90,12 @@ Score (lower = better) on 25 m samples:
 - [x] **Comparison GPX**: upload an own course, map-matched (connectors on, skip-ahead over
       gaps), scored like a generated course, with an Improve button.
 - [x] **Editing mode**: persistent — pull the course where you want it, or tap a point then its
-      destination, repeatedly until Exit editing. Each reroute replaces a ±600 m window of the
-      *current* course, so successive edits chain instead of overwriting one another. Undo
-      restores the previous course and sets `resync` so the worker re-matches it.
-- [ ] **Phase 6 – Later** (optional): Strava personal heatmap, OSM traces, multiple
-      candidates, node-level editing (add/delete individual nodes), adjustable reroute window
-      (hard-coded ±600 m today).
+      destination, repeatedly until Exit editing. Exit (✕) and Undo sit over the map. Each
+      reroute replaces an adjustable window (default ±600 m) of the *current* course, so edits
+      chain; the window start is chosen so the new point is reached near the km that was picked,
+      and the end so the course keeps its length. Via points outrank edits: the window shrinks
+      rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
+- [ ] **Multiple candidates** (next): keep the top N courses from one search and switch between
+      them with tabs at the top of the panel, plus a desktop keyboard shortcut.
+- [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava
+      personal heatmap, OSM GPS traces.

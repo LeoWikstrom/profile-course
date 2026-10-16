@@ -36,6 +36,10 @@ const resultEls: ResultElements = {
   actions: document.getElementById('course-actions') as HTMLElement,
   downloadButton: document.getElementById('download-gpx') as HTMLButtonElement,
 };
+const editBar = document.getElementById('edit-bar') as HTMLDivElement;
+const editExitButton = document.getElementById('edit-exit') as HTMLButtonElement;
+const editUndoButton = document.getElementById('edit-undo') as HTMLButtonElement;
+const rerouteWindow = document.getElementById('reroute-window') as HTMLInputElement;
 const seedInput = document.getElementById('seed-input') as HTMLInputElement;
 const coordLat = document.getElementById('coord-lat') as HTMLInputElement;
 const coordLon = document.getElementById('coord-lon') as HTMLInputElement;
@@ -132,12 +136,14 @@ function showResult(
         startSearch();
       },
     },
-    {
-      editing: editingMode,
-      toggle: () => toggleEditing(result),
-      undo: editingMode && editHistory.length > 0 ? undoEdit : undefined,
-    },
+    { editing: editingMode, toggle: () => toggleEditing(result) },
   );
+}
+
+/** Exit and Undo sit over the map, within thumb reach while editing. */
+function refreshEditBar(): void {
+  editBar.hidden = !editingMode;
+  editUndoButton.disabled = editHistory.length === 0;
 }
 
 /**
@@ -160,6 +166,7 @@ function toggleEditing(result: { course: CourseResult; profile: TargetProfile })
   editingMode = true;
   if (lastResult) showResult(lastResult, lastAction); // refresh button label
   armEditing(result);
+  refreshEditBar();
 }
 
 function exitEditing(): void {
@@ -172,7 +179,11 @@ function exitEditing(): void {
   editHistory.length = 0;
   startHint.textContent = 'Editing finished.';
   if (lastResult) showResult(lastResult, lastAction);
+  refreshEditBar();
 }
+
+editExitButton.addEventListener('click', exitEditing);
+editUndoButton.addEventListener('click', () => undoEdit());
 
 function sendEdit(
   result: { course: CourseResult; profile: TargetProfile },
@@ -181,6 +192,7 @@ function sendEdit(
 ): void {
   editHistory.push(result);
   editedPoints.push(to);
+  pendingEdit = true;
   map.setEditMarkers(editedPoints);
   map.hideCoursePoint();
   startHint.textContent = 'Rerouting…';
@@ -193,12 +205,17 @@ function sendEdit(
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),
     resync: workerCourseStale,
+    viaPoints,
+    rerouteWindowM: Math.max(100, Number(rerouteWindow.value) || 600),
   });
   workerCourseStale = false;
+  refreshEditBar();
 }
 
 /** True when the worker still holds a course we have since moved away from. */
 let workerCourseStale = false;
+/** An edit is in flight: its history entry and marker are still speculative. */
+let pendingEdit = false;
 
 function undoEdit(): void {
   const previous = editHistory.pop();
@@ -211,6 +228,7 @@ function undoEdit(): void {
   startHint.textContent = `Edit undone — mismatch back to ${previous.course.score.toFixed(1)}.`;
   persistSession();
   armEditing(previous);
+  refreshEditBar();
 }
 
 function armEditing(result: { course: CourseResult; profile: TargetProfile }): void {
@@ -421,6 +439,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     }
     case 'matched': {
       const profile = activeProfile();
+      pendingEdit = false;
       if (profile) {
         lastResult = { course: msg.course, profile };
         showResult(lastResult, { label: 'Improve this course', onAction: sendImproveMatched });
@@ -430,7 +449,10 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
             : `Course updated — mismatch ${msg.course.score.toFixed(1)}.`;
         persistSession();
         // Stay in editing mode: re-arm on the updated course.
-        if (editingMode) armEditing(lastResult);
+        if (editingMode) {
+          armEditing(lastResult);
+          refreshEditBar();
+        }
       }
       searchDone();
       break;
@@ -443,6 +465,16 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'error':
       console.warn('worker:', msg.message);
       startHint.textContent = msg.message;
+      if (pendingEdit) {
+        // The reroute failed, so the course is unchanged: drop the entry and
+        // marker that were added in anticipation.
+        pendingEdit = false;
+        editHistory.pop();
+        editedPoints.pop();
+        map.setEditMarkers(editedPoints);
+        refreshEditBar();
+        if (editingMode && lastResult) armEditing(lastResult);
+      }
       downloadAreaButton.textContent = 'Download area around start';
       downloadAreaButton.disabled = map.getStart() === null;
       areaProgress.hidden = true;

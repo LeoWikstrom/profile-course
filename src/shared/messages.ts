@@ -103,6 +103,10 @@ export type MainToWorker =
       weights: Record<string, number> | null;
       /** Re-match the sent points instead of trusting the worker's cached path. */
       resync?: boolean;
+      /** Via points, which an edit may not reroute away from. */
+      viaPoints?: ViaPoint[];
+      /** Half-width of the stretch the edit may replace (m). */
+      rerouteWindowM?: number;
     }
   | {
       /** Run the improvement pass on the current course. */

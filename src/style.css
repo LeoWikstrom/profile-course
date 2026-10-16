@@ -34,6 +34,7 @@ body {
   position: sticky;
   top: -4px;
   z-index: 2;
+  min-height: 42px;
   margin: -4px -16px 4px;
   padding: 4px 16px 0;
   background: Canvas;
@@ -130,9 +131,30 @@ button:not(:disabled) {
   color: white;
 }
 
+#edit-bar {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1100;
+  display: flex;
+  gap: 8px;
+}
+
+#edit-bar > button {
+  width: auto;
+  min-height: 40px;
+  padding: 0 14px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+
+#edit-bar > button:disabled {
+  background: Canvas;
+  color: GrayText;
+}
+
 #download-gpx {
   position: absolute;
-  top: 0;
+  top: 6px;
   right: 16px;
   width: auto;
   min-height: 32px;
@@ -276,6 +298,6 @@ progress {
   }
   #sheet-top {
     position: static;
-    min-height: 32px;
+    min-height: 44px;
   }
 }

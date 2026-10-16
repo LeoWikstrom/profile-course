@@ -12,6 +12,10 @@
   </head>
   <body>
     <div id="map"></div>
+    <div id="edit-bar" hidden>
+      <button id="edit-exit" title="Exit editing" aria-label="Exit editing">✕</button>
+      <button id="edit-undo" title="Undo the last edit">↶ Undo</button>
+    </div>
     <div id="sheet">
       <div id="sheet-top">
         <div id="sheet-handle" role="button" aria-label="Resize the panel" tabindex="0"></div>
@@ -75,6 +79,13 @@
           <ul id="via-list" class="hint"></ul>
           <button id="add-via" disabled>Add via point (then tap the map)</button>
         </div>
+        <label class="control">
+          <span>
+            Editing: reroute window ±
+            <input type="number" id="reroute-window" value="600" min="100" max="3000" step="100"
+              style="width: 80px" /> m of course replaced per edit
+          </span>
+        </label>
         <details id="areas-panel">
           <summary class="hint">Offline areas</summary>
           <p class="hint">

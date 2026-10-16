@@ -23,7 +23,7 @@ export function renderResult(
   els: ResultElements,
   course: CourseResult,
   action: { label: string; onAction: () => void },
-  onEdit?: { editing: boolean; toggle: () => void; undo?: (() => void) | undefined },
+  onEdit?: { editing: boolean; toggle: () => void },
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
@@ -74,12 +74,6 @@ export function renderResult(
     edit.title = 'Editing mode: pull the course where you want it, or tap a point then its destination';
     edit.addEventListener('click', onEdit.toggle);
     els.actions.appendChild(edit);
-    if (onEdit.undo) {
-      const undo = document.createElement('button');
-      undo.textContent = 'Undo';
-      undo.addEventListener('click', onEdit.undo);
-      els.actions.appendChild(undo);
-    }
   }
 
   const copyLink = document.createElement('button');

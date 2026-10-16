@@ -63,4 +63,58 @@ describe('reroutePath', () => {
     const oldNodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
     expect(newNodes[newNodes.length - 1]).toBe(oldNodes[oldNodes.length - 1]);
   });
+
+  it('puts the chosen point near the km it was asked for, and keeps vias', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
+    const courseNodes = new Set(nodes);
+    const { dist } = dijkstra(graph, [startNode]);
+    let off = -1;
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (!courseNodes.has(i) && dist[i]! > 200 && dist[i]! < 600) {
+        off = i;
+        break;
+      }
+    }
+    expect(off).toBeGreaterThanOrEqual(0);
+
+    const atM = 800;
+    const rerouted = reroutePath(graph, course.path, atM, off, { windowM: 600 });
+    expect(rerouted).not.toBeNull();
+    // Reached near the km that was asked for, without stretching the course.
+    expect(Math.abs(distanceToNode(rerouted!, off) - atM)).toBeLessThan(300);
+    const before = cumLengths(course.path);
+    const after = cumLengths(rerouted!);
+    expect(Math.abs(after[after.length - 1]! - before[before.length - 1]!)).toBeLessThan(300);
+
+    // A via inside the window outranks the edit and stays on the course.
+    const cum = cumLengths(course.path);
+    let viaIdx = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      if (Math.abs(cum[i]! - (atM - 250)) < Math.abs(cum[viaIdx]! - (atM - 250))) viaIdx = i;
+    }
+    const viaNode = nodes[viaIdx]!;
+    const kept = reroutePath(graph, course.path, atM, off, {
+      windowM: 600,
+      keepNodes: new Set([viaNode]),
+    });
+    expect(kept).not.toBeNull();
+    expect(pathNodes(graph, kept!, pathRoot(graph, kept!))).toContain(viaNode);
+  });
 });
+
+function cumLengths(path: { edges: number[] }): number[] {
+  const cum = [0];
+  for (const ei of path.edges) cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
+  return cum;
+}
+
+/** Distance along the path at which `node` is first reached, in metres. */
+function distanceToNode(path: { edges: number[]; dirs: number[] }, node: number): number {
+  const nodes = pathNodes(graph, path, pathRoot(graph, path));
+  const cum = cumLengths(path);
+  const i = nodes.indexOf(node);
+  return i < 0 ? Infinity : cum[i]!;
+}
