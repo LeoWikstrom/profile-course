@@ -29,6 +29,8 @@ export interface CourseResult {
   gain: number;
   loss: number;
   score: number;
+  /** Per-term score contributions, for the breakdown line. */
+  breakdown: Record<string, number>;
   surfaceSplit: [number, number, number, number];
   seed: number;
 }

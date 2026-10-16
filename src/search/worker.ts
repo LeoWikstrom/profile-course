@@ -24,7 +24,14 @@ import { matchTrackToGraph } from '../graph/match';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
-import { assembleCourse, scoreCourse, DEFAULT_WEIGHTS, MIX_ROAD, type CoursePath } from './score';
+import {
+  assembleCourse,
+  scoreBreakdown,
+  scoreCourse,
+  DEFAULT_WEIGHTS,
+  MIX_ROAD,
+  type CoursePath,
+} from './score';
 
 function post(msg: WorkerToMain): void {
   postMessage(msg);
@@ -159,7 +166,12 @@ function pathSegments(g: Graph, path: CoursePath): CourseSegment[] {
   });
 }
 
-function toResult(g: Graph, candidate: WalkCandidate, seed: number): CourseResult {
+function toResult(
+  g: Graph,
+  candidate: WalkCandidate,
+  seed: number,
+  breakdown: Record<string, number>,
+): CourseResult {
   const exportPoints: CourseResult['exportPoints'] = [];
   for (let i = 0; i < candidate.path.edges.length; i++) {
     const e = g.edges[candidate.path.edges[i]!]!;
@@ -180,6 +192,7 @@ function toResult(g: Graph, candidate: WalkCandidate, seed: number): CourseResul
     gain: candidate.course.gain,
     loss: candidate.course.loss,
     score: candidate.score,
+    breakdown,
     surfaceSplit: candidate.course.surfaceSplit,
     seed,
   };
@@ -293,7 +306,15 @@ async function search(
       `search ${(tSearch - tGraph).toFixed(0)} ms, improve ${(tDone - tSearch).toFixed(0)} ms, ` +
       `score ${candidates[0]!.score.toFixed(2)} -> ${improved[0]!.score.toFixed(2)}`,
   );
-  post({ type: 'result', course: toResult(g, improved[0]!, seed) });
+  post({
+    type: 'result',
+    course: toResult(
+      g,
+      improved[0]!,
+      seed,
+      scoreBreakdown(improved[0]!.course, profile, opts.desiredMix ?? MIX_ROAD, weights),
+    ),
+  });
 }
 
 async function matchCourse(
@@ -326,7 +347,12 @@ async function matchCourse(
   matchedKey = preparedKey;
   post({
     type: 'matched',
-    course: toResult(g, { path, course, score }, 0),
+    course: toResult(
+      g,
+      { path, course, score },
+      0,
+      scoreBreakdown(course, target, desiredMix ?? MIX_ROAD, weights),
+    ),
     snappedFraction,
     improvable: true,
   });
@@ -357,7 +383,12 @@ async function improveMatched(
   matchedPath = improved[0]!.path;
   post({
     type: 'matched',
-    course: toResult(g, improved[0]!, 0),
+    course: toResult(
+      g,
+      improved[0]!,
+      0,
+      scoreBreakdown(improved[0]!.course, target, desiredMix ?? MIX_ROAD, weights),
+    ),
     snappedFraction: 1,
     improvable: true,
   });

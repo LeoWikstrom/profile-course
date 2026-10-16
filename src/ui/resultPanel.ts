@@ -24,10 +24,18 @@ export function renderResult(
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
     .filter((s) => s !== null)
     .join(', ');
+  const topTerms = Object.entries(course.breakdown ?? {})
+    .filter(([, v]) => v >= 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([k, v]) => `${k} ${v.toFixed(1)}`)
+    .join(', ');
   els.stats.hidden = false;
   els.stats.textContent =
     `${(course.lengthM / 1000).toFixed(2)} km, +${Math.round(course.gain)} m / ` +
-    `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} (lower is better) \u00b7 ${split}`;
+    `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} (lower is better` +
+    (topTerms ? `; mostly ${topTerms}` : '') +
+    `) \u00b7 ${split}`;
 
   els.downloadButton.hidden = false;
   els.downloadButton.onclick = () => {

@@ -312,12 +312,13 @@ export function worstWindowShapeError(course: Float32Array, target: Float32Array
   return worst;
 }
 
-export function scoreCourse(
+/** Per-term contributions; scoreCourse is their sum. */
+export function scoreBreakdown(
   course: AssembledCourse,
   target: TargetProfile,
   desiredMix: SurfaceMix | null = MIX_ROAD,
   weights: Weights = DEFAULT_WEIGHTS,
-): number {
+): Record<string, number> {
   // Offset-corrected RMSE: a constant vertical offset between the two
   // profiles is DEM-vs-GPX measurement bias at the start point (observed:
   // 7 m at Slottsskogsvallen), not a real mismatch. Shape is what matters.
@@ -339,19 +340,30 @@ export function scoreCourse(
   const courseHist = gradientHistogram(course.samples);
   const histErr = emd(courseHist, target.gradientHistogram);
 
-  return (
-    weights.rmse * rmse +
-    weights.gainLoss * gainLossErr +
-    weights.histogram * histErr +
-    weights.surface * (desiredMix ? surfaceMismatch(course.surfaceSplit, desiredMix) : 0) +
-    weights.penalty * course.penaltyFraction +
-    weights.repeat * course.repeatFraction +
-    weights.oscillation * course.oscillationFraction +
-    weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm) +
-    weights.denseTurns * course.denseTurnsPerKm +
-    weights.trafficLights * course.signalsPerKm +
-    weights.localShape * worstWindowShapeError(course.samples, target.samples)
-  );
+  return {
+    profile: weights.rmse * rmse,
+    'gain/loss': weights.gainLoss * gainLossErr,
+    gradients: weights.histogram * histErr,
+    surface: weights.surface * (desiredMix ? surfaceMismatch(course.surfaceSplit, desiredMix) : 0),
+    safety: weights.penalty * course.penaltyFraction,
+    repeats: weights.repeat * course.repeatFraction,
+    'out-and-back': weights.oscillation * course.oscillationFraction,
+    turns: weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm),
+    'dense turns': weights.denseTurns * course.denseTurnsPerKm,
+    'traffic lights': weights.trafficLights * course.signalsPerKm,
+    'local shape': weights.localShape * worstWindowShapeError(course.samples, target.samples),
+  };
+}
+
+export function scoreCourse(
+  course: AssembledCourse,
+  target: TargetProfile,
+  desiredMix: SurfaceMix | null = MIX_ROAD,
+  weights: Weights = DEFAULT_WEIGHTS,
+): number {
+  let sum = 0;
+  for (const v of Object.values(scoreBreakdown(course, target, desiredMix, weights))) sum += v;
+  return sum;
 }
 
 export { GRADIENT_BIN_COUNT };
