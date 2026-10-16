@@ -61,7 +61,11 @@
           <span>Return to start</span>
         </label>
         <div class="control">
-          <span>Via points (course must pass, in order)</span>
+          <span>
+            Via points (course must pass, in order) — tolerance ±
+            <input type="number" id="via-tolerance" value="1.0" min="0.1" step="0.1"
+              style="width: 60px" /> km
+          </span>
           <ul id="via-list" class="hint"></ul>
           <button id="add-via" disabled>Add via point (then tap the map)</button>
         </div>

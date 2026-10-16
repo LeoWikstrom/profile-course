@@ -212,6 +212,8 @@ function startSearch(): void {
     beamWidth:
       Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
     viaPoints,
+    viaToleranceKm:
+      Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 1,
   });
 }
 
@@ -409,6 +411,28 @@ function renderVias(): void {
       persistSession();
     });
     li.appendChild(km);
+    const pick = document.createElement('button');
+    pick.textContent = 'pick on chart';
+    pick.style.width = 'auto';
+    pick.style.minHeight = '28px';
+    pick.style.marginLeft = '8px';
+    pick.addEventListener('click', () => {
+      const profile = activeProfile();
+      if (!profile) return;
+      startHint.textContent = 'Tap the elevation chart where this via should be reached…';
+      const onTap = (e: PointerEvent) => {
+        targetChart.removeEventListener('pointerdown', onTap, true);
+        const rect = targetChart.getBoundingClientRect();
+        const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const kmVal = (frac * profile.totalDistance) / 1000;
+        viaPoints[i]!.km = Math.round(kmVal * 10) / 10;
+        startHint.textContent = `Via ${i + 1} set to km ${viaPoints[i]!.km}`;
+        renderVias();
+        persistSession();
+      };
+      targetChart.addEventListener('pointerdown', onTap, true);
+    });
+    li.appendChild(pick);
     const del = document.createElement('button');
     del.textContent = '×';
     del.style.width = 'auto';

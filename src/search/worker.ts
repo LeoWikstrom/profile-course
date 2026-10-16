@@ -209,31 +209,54 @@ interface SearchOptionsIn {
   connectors: boolean;
   beamWidth: number;
   viaPoints: ViaPoint[];
+  viaToleranceKm: number;
 }
 
 const VIA_NEAR_M = 40;
 
+/**
+ * A via matches graph nodes within 40 m AND edges whose geometry passes
+ * within 40 m — long edges (bridge spans) have no nodes mid-span, so node
+ * proximity alone wrongly rejected points placed on them.
+ */
 function resolveVias(
   g: Graph,
   viaPoints: ViaPoint[],
-): { nodes: Set<number>; dist: Float64Array; kmM: number | null }[] {
+): { nodes: Set<number>; edges: Set<number>; dist: Float64Array; kmM: number | null }[] {
   return viaPoints.map((v, i) => {
     const nodes = new Set<number>();
+    const edges = new Set<number>();
     for (let n = 0; n < g.nodeLat.length; n++) {
       if (haversineMeters(v.lat, v.lon, g.nodeLat[n]!, g.nodeLon[n]!) <= VIA_NEAR_M) nodes.add(n);
+    }
+    for (let ei = 0; ei < g.edges.length; ei++) {
+      const e = g.edges[ei]!;
+      for (let j = 0; j < e.lats.length; j++) {
+        if (haversineMeters(v.lat, v.lon, e.lats[j]!, e.lons[j]!) <= VIA_NEAR_M) {
+          edges.add(ei);
+          nodes.add(e.a);
+          nodes.add(e.b);
+          break;
+        }
+      }
     }
     if (nodes.size === 0) {
       throw new Error(`Via point ${i + 1} is more than ${VIA_NEAR_M} m from any path`);
     }
-    return { nodes, dist: dijkstra(g, [...nodes]).dist, kmM: v.km !== null ? v.km * 1000 : null };
+    return {
+      nodes,
+      edges,
+      dist: dijkstra(g, [...nodes]).dist,
+      kmM: v.km !== null ? v.km * 1000 : null,
+    };
   });
 }
 
-/** True when the path visits every via node-set in order. */
+/** True when the path visits every via (node or traversed edge) in order. */
 function pathVisitsVias(
   g: Graph,
   path: CoursePath,
-  vias: { nodes: Set<number> }[],
+  vias: { nodes: Set<number>; edges: Set<number> }[],
   root: number,
 ): boolean {
   let vi = 0;
@@ -241,8 +264,9 @@ function pathVisitsVias(
   if (vias.length === 0) return true;
   if (vias[0]!.nodes.has(node)) vi++;
   for (let i = 0; i < path.edges.length && vi < vias.length; i++) {
-    node = otherNode(g.edges[path.edges[i]!]!, node);
-    if (vias[vi]!.nodes.has(node)) vi++;
+    const ei = path.edges[i]!;
+    node = otherNode(g.edges[ei]!, node);
+    if (vias[vi]!.edges.has(ei) || vias[vi]!.nodes.has(node)) vi++;
   }
   return vi >= vias.length;
 }
@@ -319,6 +343,7 @@ async function search(
           seed,
           beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
           vias,
+          viaSlackM: Math.max(100, (opts.viaToleranceKm || 1) * 1000),
           desiredMix: opts.desiredMix,
           returnToStart: opts.returnToStart,
           weights,
@@ -472,6 +497,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         connectors: msg.connectors,
         beamWidth: msg.beamWidth,
         viaPoints: msg.viaPoints,
+        viaToleranceKm: msg.viaToleranceKm,
       }).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),

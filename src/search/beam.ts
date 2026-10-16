@@ -40,7 +40,9 @@ export interface BeamOptions {
    * via"; dist = multi-source Dijkstra distances to them; kmM = optional
    * course distance (metres) near which the via must be reached.
    */
-  vias?: { nodes: Set<number>; dist: Float64Array; kmM: number | null }[];
+  vias?: { nodes: Set<number>; edges?: Set<number>; dist: Float64Array; kmM: number | null }[];
+  /** Half-width of the km window around each via's km, metres. */
+  viaSlackM?: number;
   onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
   shouldCancel?: () => boolean;
 }
@@ -222,12 +224,11 @@ export async function beamSearch(
     validEnd = null,
     startNodes = null,
     vias = [],
+    viaSlackM = Math.max(500, targetLengthM * 0.05),
     onProgress,
     shouldCancel,
   } = options;
   const fullViaMask = (1 << vias.length) - 1;
-  // Tolerance around a via's km: generous, "close to" per the spec.
-  const viaSlackM = Math.max(500, targetLengthM * 0.05);
 
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
@@ -419,7 +420,7 @@ export async function beamSearch(
           let vi = 0;
           while (vi < vias.length && (viaMask & (1 << vi)) !== 0) vi++;
           const via = vias[vi]!;
-          if (via.nodes.has(nextNode)) {
+          if (via.nodes.has(nextNode) || via.edges?.has(ei)) {
             if (via.kmM === null || Math.abs(newDist - via.kmM) <= viaSlackM) {
               viaMask |= 1 << vi;
             }

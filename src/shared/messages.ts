@@ -78,6 +78,8 @@ export type MainToWorker =
       beamWidth: number;
       /** Must-pass points, in order; each with an optional km. */
       viaPoints: ViaPoint[];
+      /** Half-width of the km window around each via's km (km). */
+      viaToleranceKm: number;
     }
   | {
       /** Map-match an uploaded course and score it against the target. */
