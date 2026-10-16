@@ -84,5 +84,10 @@ Score (lower = better) on 25 m samples:
       gokartor.se layer switcher (`https://kartor.gokartor.se/Master/{z}/{y}/{x}.png` —
       note y/x order; usage terms not published, personal use). Deploy explicitly deferred
       by Leo.
+- [x] **Via points**: must-pass markers (optional km each, adjustable ± window, pick-on-chart),
+      enforced as a visit-order bitmask in the beam with reachability pruning; improve pass
+      cannot remove a via. Resolution is point-to-segment, 25 m radius.
+- [x] **Comparison GPX**: upload an own course, map-matched (connectors on, skip-ahead over
+      gaps), scored like a generated course, with an Improve button.
 - [ ] **Phase 6 – Later** (optional): Strava personal heatmap, OSM traces, multiple
-      candidates, course editing mode (add/delete/move path nodes — gold feature).
+      candidates, full node-level course editing (add/delete/move path nodes).
