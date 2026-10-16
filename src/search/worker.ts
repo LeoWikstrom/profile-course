@@ -336,7 +336,9 @@ async function matchCourse(
   const center = { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
   const halfDiag =
     haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
-  await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0);
+  // Matching follows the user's own route, which may well cross streets
+  // informally — always build this graph with connectors enabled.
+  await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0, true);
   const g = graph!;
 
   post({ type: 'progress', stage: 'matching course', fraction: 0.8, bestScore: null });

@@ -50,15 +50,23 @@ export function matchTrackToGraph(
   }
 
   const path: CoursePath = { edges: [], dirs: [] };
-  for (let i = 1; i < waypoints.length; i++) {
-    const from = waypoints[i - 1]!;
-    const to = waypoints[i]!;
-    const crow = to.atM - from.atM;
-    const res = dijkstra(graph, [from.node], {
-      target: to.node,
-      maxDist: Math.max(300, crow * JOIN_MAX_FACTOR),
-    });
-    const seg = reconstructPath(graph, res, from.node, to.node);
+  let i = 0;
+  while (i < waypoints.length - 1) {
+    const from = waypoints[i]!;
+    // When a join fails (a short unmapped stretch in the user's track), skip
+    // ahead a few waypoints and try to bridge over it before giving up.
+    let seg = null;
+    let j = i + 1;
+    for (; j < Math.min(i + 6, waypoints.length); j++) {
+      const to = waypoints[j]!;
+      const crow = to.atM - from.atM;
+      const res = dijkstra(graph, [from.node], {
+        target: to.node,
+        maxDist: Math.max(300, crow * JOIN_MAX_FACTOR),
+      });
+      seg = reconstructPath(graph, res, from.node, to.node);
+      if (seg) break;
+    }
     if (!seg) {
       throw new Error(
         `Could not follow the course near km ${(from.atM / 1000).toFixed(1)} — ` +
@@ -67,6 +75,7 @@ export function matchTrackToGraph(
     }
     path.edges.push(...seg.edges);
     path.dirs.push(...seg.dirs);
+    i = j;
   }
   return { path, snappedFraction: total > 0 ? snapped / total : 0 };
 }
