@@ -45,7 +45,9 @@ export const DEFAULT_WEIGHTS: Weights = {
   histogram: 10,
   surface: 15,
   penalty: 30,
-  repeat: 10,
+  // Lap-driven courses ("circles in the cemetery") reused a third of their
+  // edges at weight 10 and barely noticed; 30 makes improve unroll laps.
+  repeat: 30,
   oscillation: 80,
   turns: 2,
   denseTurns: 2,

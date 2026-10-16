@@ -80,7 +80,7 @@ describe('scoreCourse', () => {
     const clean = courseFrom(triangle(801, 100));
     const laps = { ...clean, repeatFraction: 0.3 };
     const bounce = { ...clean, oscillationFraction: 0.3 };
-    expect(scoreCourse(bounce, target)).toBeGreaterThan(3 * scoreCourse(laps, target));
+    expect(scoreCourse(bounce, target)).toBeGreaterThan(2 * scoreCourse(laps, target));
   });
 
   it('surface mismatch penalises a trail course against a road mix', () => {

@@ -78,6 +78,19 @@ export function edgePenalty(tags: Record<string, string>): number {
 const CONNECTOR_MAX_M = 16;
 const CONNECTOR_PENALTY = 0.15;
 const CONNECTOR_TAG = 'profile:connector';
+/**
+ * Connectors only target street-class ways: "cross the residential street
+ * anywhere" is the intent. Unrestricted path-to-path connectors meshed up
+ * dense path areas (cemeteries) and measurably hurt course quality.
+ */
+const CONNECTOR_TARGETS = new Set([
+  'residential',
+  'living_street',
+  'unclassified',
+  'tertiary',
+  'service',
+  'pedestrian',
+]);
 
 /**
  * OSM sidewalks and paths often dead-end a few metres from the street they
@@ -182,6 +195,7 @@ function connectCrossings(
           if (!segs) continue;
           for (const s of segs) {
             if (s.wayIdx === wi) continue;
+            if (!CONNECTOR_TARGETS.has(ways[s.wayIdx]!.tags?.['highway'] ?? '')) continue;
             if (wayNodeSet.has(s.aId) || wayNodeSet.has(s.bId)) continue;
             const dx = s.bx - s.ax;
             const dy = s.by - s.ay;
