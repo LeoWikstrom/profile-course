@@ -101,6 +101,8 @@ export type MainToWorker =
       target: TargetTransfer;
       desiredMix: [number, number, number, number] | null;
       weights: Record<string, number> | null;
+      /** Re-match the sent points instead of trusting the worker's cached path. */
+      resync?: boolean;
     }
   | {
       /** Run the improvement pass on the current course. */
@@ -110,6 +112,7 @@ export type MainToWorker =
       target: TargetTransfer;
       desiredMix: [number, number, number, number] | null;
       weights: Record<string, number> | null;
+      resync?: boolean;
     }
   | { type: 'cancel' };
 

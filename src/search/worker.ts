@@ -466,10 +466,15 @@ async function matchCourse(
 
 /**
  * Returns the current course path, rebuilding worker state from the course's
- * own points when memory was lost (page reload, session restore).
+ * own points when memory was lost (page reload, session restore) or when the
+ * caller has moved on from it (undo).
  */
-async function ensureCurrentPath(lats: Float64Array, lons: Float64Array): Promise<CoursePath> {
-  if (matchedPath && graph && matchedKey === preparedKey) return matchedPath;
+async function ensureCurrentPath(
+  lats: Float64Array,
+  lons: Float64Array,
+  resync = false,
+): Promise<CoursePath> {
+  if (!resync && matchedPath && graph && matchedKey === preparedKey) return matchedPath;
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
@@ -494,8 +499,9 @@ async function editCourse(
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
+  resync: boolean,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons);
+  const currentPath = await ensureCurrentPath(lats, lons, resync);
   const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, 60);
   if (targetNode < 0) {
@@ -528,8 +534,9 @@ async function improveMatched(
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
+  resync: boolean,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons);
+  const currentPath = await ensureCurrentPath(lats, lons, resync);
   cancelled = false;
   const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
@@ -607,13 +614,13 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       );
       break;
     case 'editCourse':
-      editCourse(msg.atKm, msg.to, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+      editCourse(msg.atKm, msg.to, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights, msg.resync ?? false).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'improveCourse':
-      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights, msg.resync ?? false).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

@@ -29,12 +29,21 @@ body {
   overflow-y: auto;
 }
 
+/* Sticky so the sheet can always be resized, even scrolled deep into the menu. */
+#sheet-top {
+  position: sticky;
+  top: -4px;
+  z-index: 2;
+  margin: -4px -16px 4px;
+  padding: 4px 16px 0;
+  background: Canvas;
+}
+
 #sheet-handle {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 26px;
-  margin: 0 -16px 4px;
   touch-action: none;
   cursor: grab;
 }
@@ -123,10 +132,10 @@ button:not(:disabled) {
 
 #download-gpx {
   position: absolute;
-  top: 10px;
+  top: 0;
   right: 16px;
   width: auto;
-  min-height: 36px;
+  min-height: 32px;
   padding: 0 12px;
   background: #2563eb;
   border-color: #2563eb;
@@ -239,6 +248,21 @@ progress {
   display: inline-block;
 }
 
+/* The scrubbed/selected course point, and spots already rerouted. */
+.course-point {
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #dc2626;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+.edited-point {
+  border-radius: 50%;
+  background: #7c3aed;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
 @media (min-width: 900px) {
   #sheet {
     top: 0;
@@ -249,5 +273,9 @@ progress {
   }
   #sheet-handle {
     display: none;
+  }
+  #sheet-top {
+    position: static;
+    min-height: 32px;
   }
 }

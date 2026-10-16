@@ -9,6 +9,10 @@ import type { CourseSegment, LatLon } from '../shared/messages';
 const SURFACE_COLORS = ['#2563eb', '#d97706', '#16a34a', '#6b7280'];
 const KM_SAMPLE_STRIDE = 40; // 1000 m / 25 m
 const ARROW_SAMPLE_STRIDE = 20; // every ~500 m
+/** Above markerPane (600), so edit markers never hide behind km labels. */
+const EDIT_PANE = 'editPane';
+const GRAB_RADIUS_PX = 28;
+const DRAG_THRESHOLD_PX = 12;
 
 // Leaflet's _getIconUrl builds paths from imagePath, bypassing the bundler's
 // hashed asset URLs; removing it makes mergeOptions URLs win.
@@ -30,6 +34,17 @@ export interface MapController {
   disarmViaPlacement(): void;
   /** Redraws numbered, draggable via markers. */
   setViaMarkers(vias: LatLon[], onMove: (index: number, p: LatLon) => void): void;
+  /** Dots showing where the course has already been edited. */
+  setEditMarkers(points: LatLon[]): void;
+  /**
+   * Press on the course and pull it somewhere else. `dragged` is false when the
+   * press was really a tap, so the caller can fall back to a two-tap flow.
+   */
+  armCourseDrag(
+    points: LatLon[],
+    onPull: (index: number, to: LatLon, dragged: boolean) => void,
+  ): void;
+  disarmCourseDrag(): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
   /** Km labels and running-direction arrows along ~25 m-spaced course points. */
   decorateCourse(points: { lat: number; lon: number }[]): void;
@@ -41,6 +56,7 @@ export interface MapController {
 export function createMap(container: string): MapController {
   const map = L.map(container, { zoomControl: false }).setView([57.7089, 11.9746], 12);
   L.control.zoom({ position: 'topright' }).addTo(map);
+  map.createPane(EDIT_PANE).style.zIndex = '680';
 
   // GoKartor as a second layer was tried and blocked (licensing protection);
   // ask Gokartor AB for permission before re-adding.
@@ -77,7 +93,10 @@ export function createMap(container: string): MapController {
   }
 
   let viaTapCb: ((p: LatLon) => void) | null = null;
+  let lastDragEnd = 0;
   map.on('click', (e: L.LeafletMouseEvent) => {
+    // A pulled course emits a trailing click on touch; don't treat it as a tap.
+    if (Date.now() - lastDragEnd < 400) return;
     if (viaTapCb) {
       const cb = viaTapCb;
       viaTapCb = null;
@@ -88,8 +107,75 @@ export function createMap(container: string): MapController {
   });
 
   let courseLayer: L.LayerGroup | null = null;
-  let pointMarker: L.CircleMarker | null = null;
+  let pointMarker: L.Marker | null = null;
   let viaMarkers: L.Marker[] = [];
+  let editMarkers: L.Marker[] = [];
+
+  let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
+  let pullPoints: LatLon[] = [];
+  let pullIndex = -1;
+  let pullStart: { x: number; y: number } | null = null;
+  let rubber: L.Polyline | null = null;
+
+  function nearestCoursePoint(e: PointerEvent): number {
+    const p = map.mouseEventToContainerPoint(e);
+    let best = -1;
+    let bestD = GRAB_RADIUS_PX;
+    for (let i = 0; i < pullPoints.length; i++) {
+      const q = map.latLngToContainerPoint([pullPoints[i]!.lat, pullPoints[i]!.lon]);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  const mapEl = map.getContainer();
+
+  mapEl.addEventListener('pointerdown', (e) => {
+    if (!pullCb || pullStart) return;
+    const i = nearestCoursePoint(e);
+    if (i < 0) return; // away from the course: let the map pan as usual
+    pullIndex = i;
+    pullStart = { x: e.clientX, y: e.clientY };
+    map.dragging.disable();
+    mapEl.setPointerCapture(e.pointerId);
+  });
+
+  mapEl.addEventListener('pointermove', (e) => {
+    if (!pullStart) return;
+    const from = pullPoints[pullIndex]!;
+    const to = map.mouseEventToLatLng(e);
+    const line: L.LatLngExpression[] = [[from.lat, from.lon], to];
+    if (rubber) rubber.setLatLngs(line);
+    else {
+      rubber = L.polyline(line, {
+        pane: EDIT_PANE,
+        color: '#dc2626',
+        weight: 3,
+        dashArray: '6 4',
+      }).addTo(map);
+    }
+  });
+
+  const endPull = (e: PointerEvent, commit: boolean) => {
+    if (!pullStart) return;
+    const moved = Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y);
+    const index = pullIndex;
+    pullStart = null;
+    pullIndex = -1;
+    rubber?.remove();
+    rubber = null;
+    map.dragging.enable();
+    if (!commit) return;
+    lastDragEnd = Date.now();
+    const to = map.mouseEventToLatLng(e);
+    pullCb?.(index, { lat: to.lat, lon: to.lng }, moved >= DRAG_THRESHOLD_PX);
+  };
+  mapEl.addEventListener('pointerup', (e) => endPull(e, true));
+  mapEl.addEventListener('pointercancel', (e) => endPull(e, false));
 
   return {
     armViaPlacement(cb) {
@@ -111,6 +197,24 @@ export function createMap(container: string): MapController {
         });
         return m;
       });
+    },
+    setEditMarkers(points) {
+      for (const m of editMarkers) m.remove();
+      editMarkers = points.map((p) =>
+        L.marker([p.lat, p.lon], {
+          pane: EDIT_PANE,
+          interactive: false,
+          icon: L.divIcon({ className: 'edited-point', iconSize: [12, 12] }),
+        }).addTo(map),
+      );
+    },
+    armCourseDrag(points, onPull) {
+      pullPoints = points;
+      pullCb = onPull;
+    },
+    disarmCourseDrag() {
+      pullCb = null;
+      pullPoints = [];
     },
     drawCourse(segments, options) {
       courseLayer?.remove();
@@ -169,12 +273,10 @@ export function createMap(container: string): MapController {
     },
     showCoursePoint(point) {
       if (!pointMarker) {
-        pointMarker = L.circleMarker([point.lat, point.lon], {
-          radius: 7,
-          color: '#dc2626',
-          weight: 3,
-          fillColor: '#fff',
-          fillOpacity: 1,
+        pointMarker = L.marker([point.lat, point.lon], {
+          pane: EDIT_PANE,
+          interactive: false,
+          icon: L.divIcon({ className: 'course-point', iconSize: [16, 16] }),
         }).addTo(map);
       } else {
         pointMarker.setLatLng([point.lat, point.lon]);

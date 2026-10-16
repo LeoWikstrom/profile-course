@@ -1,17 +1,17 @@
-import { buildTargetProfile, sliceProfile, type TargetProfile } from './gpx/profile';
+import { buildTargetProfile, SAMPLE_STEP_M, sliceProfile, type TargetProfile } from './gpx/profile';
 import { parseGpx, type ParsedGpx } from './gpx/parse';
 import { SURFACE_PRESETS } from './search/score';
 import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
-import { renderInteractiveChart, renderProfileChart } from './ui/profileChart';
+import { renderInteractiveChart } from './ui/profileChart';
 import { hideResult, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
 import SearchWorker from './search/worker?worker';
 
 const map = createMap('map');
 const worker = new SearchWorker();
-initSheet(
+const sheet = initSheet(
   document.getElementById('sheet') as HTMLElement,
   document.getElementById('sheet-handle') as HTMLElement,
 );
@@ -31,6 +31,8 @@ const targetChart = document.getElementById('target-chart') as HTMLDivElement;
 const algorithmSelect = document.getElementById('algorithm-select') as HTMLSelectElement;
 const resultEls: ResultElements = {
   stats: document.getElementById('course-stats') as HTMLElement,
+  advanced: document.getElementById('course-advanced') as HTMLDetailsElement,
+  advancedBody: document.getElementById('course-advanced-body') as HTMLElement,
   actions: document.getElementById('course-actions') as HTMLElement,
   downloadButton: document.getElementById('download-gpx') as HTMLButtonElement,
 };
@@ -112,8 +114,12 @@ function showResult(
   const points = result.course.exportPoints;
   // The combined chart replaces the target-only chart at the top of the sheet.
   renderInteractiveChart(targetChart, result.profile.samples, result.course.samples, (i) => {
-    if (i === null) map.hideCoursePoint();
-    else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
+    if (i === null) {
+      map.hideCoursePoint();
+      return;
+    }
+    lastChartKm = (i * SAMPLE_STEP_M) / 1000;
+    map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
   });
   renderResult(
     resultEls,
@@ -126,16 +132,25 @@ function showResult(
         startSearch();
       },
     },
-    { editing: editingMode, toggle: () => toggleEditing(result) },
+    {
+      editing: editingMode,
+      toggle: () => toggleEditing(result),
+      undo: editingMode && editHistory.length > 0 ? undoEdit : undefined,
+    },
   );
 }
 
 /**
- * Persistent editing mode: tap a course point, tap its new location, repeat —
- * each reroute builds on the previous one — until Exit editing.
+ * Persistent editing mode: pull the course somewhere else, or tap a course
+ * point then tap its destination. Either way the mode stays armed, and each
+ * reroute builds on the previous one, until Exit editing.
  */
 let editingMode = false;
 let lastAction: { label: string; onAction: () => void } | undefined;
+/** Courses replaced by an edit, newest last, for Undo. */
+const editHistory: { course: CourseResult; profile: TargetProfile }[] = [];
+/** Where edits have landed, drawn on the map while editing. */
+let editedPoints: { lat: number; lon: number }[] = [];
 
 function toggleEditing(result: { course: CourseResult; profile: TargetProfile }): void {
   if (editingMode) {
@@ -144,48 +159,93 @@ function toggleEditing(result: { course: CourseResult; profile: TargetProfile })
   }
   editingMode = true;
   if (lastResult) showResult(lastResult, lastAction); // refresh button label
-  armEditTap(result);
+  armEditing(result);
 }
 
 function exitEditing(): void {
   editingMode = false;
   map.disarmViaPlacement();
+  map.disarmCourseDrag();
   map.hideCoursePoint();
+  map.setEditMarkers([]);
+  editedPoints = [];
+  editHistory.length = 0;
   startHint.textContent = 'Editing finished.';
   if (lastResult) showResult(lastResult, lastAction);
 }
 
-function armEditTap(result: { course: CourseResult; profile: TargetProfile }): void {
-  startHint.textContent = 'Editing: tap a point ON the course (Exit editing to stop)…';
-  map.armViaPlacement((p1) => {
-    const points = result.course.exportPoints;
+function sendEdit(
+  result: { course: CourseResult; profile: TargetProfile },
+  atKm: number,
+  to: { lat: number; lon: number },
+): void {
+  editHistory.push(result);
+  editedPoints.push(to);
+  map.setEditMarkers(editedPoints);
+  map.hideCoursePoint();
+  startHint.textContent = 'Rerouting…';
+  send({
+    type: 'editCourse',
+    atKm,
+    to,
+    ...coursePointArrays(result.course),
+    target: targetTransfer(result.profile),
+    desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
+    weights: collectWeights(),
+    resync: workerCourseStale,
+  });
+  workerCourseStale = false;
+}
+
+/** True when the worker still holds a course we have since moved away from. */
+let workerCourseStale = false;
+
+function undoEdit(): void {
+  const previous = editHistory.pop();
+  if (!previous) return;
+  workerCourseStale = true; // the worker's cached path is the edit we just dropped
+  editedPoints.pop();
+  map.setEditMarkers(editedPoints);
+  lastResult = previous;
+  showResult(previous, lastAction);
+  startHint.textContent = `Edit undone — mismatch back to ${previous.course.score.toFixed(1)}.`;
+  persistSession();
+  armEditing(previous);
+}
+
+function armEditing(result: { course: CourseResult; profile: TargetProfile }): void {
+  const points = result.course.exportPoints;
+  startHint.textContent = 'Editing: pull the course where you want it, or tap a point on it.';
+  map.setEditMarkers(editedPoints);
+
+  const selectDestination = (index: number) => {
+    const atKm = (index * SAMPLE_STEP_M) / 1000;
+    map.showCoursePoint(points[index]!);
+    // While waiting for the destination, a tap near the course must not be
+    // swallowed as a new pull.
+    map.disarmCourseDrag();
+    startHint.textContent = `Editing: rerouting near km ${atKm.toFixed(1)} — tap where the course should go…`;
+    map.armViaPlacement((to) => sendEdit(result, atKm, to));
+  };
+
+  map.armCourseDrag(points, (index, to, dragged) => {
+    if (dragged) sendEdit(result, (index * SAMPLE_STEP_M) / 1000, to);
+    else selectDestination(index);
+  });
+  map.armViaPlacement((p) => {
+    // A tap away from the course still picks the nearest course point.
     let bestI = 0;
     let bestD = Infinity;
     for (let i = 0; i < points.length; i++) {
-      const d =
-        (points[i]!.lat - p1.lat) * (points[i]!.lat - p1.lat) +
-        (points[i]!.lon - p1.lon) * (points[i]!.lon - p1.lon);
+      const dLat = points[i]!.lat - p.lat;
+      const dLon = points[i]!.lon - p.lon;
+      const d = dLat * dLat + dLon * dLon;
       if (d < bestD) {
         bestD = d;
         bestI = i;
       }
     }
-    const atKm = (bestI * 25) / 1000;
-    map.showCoursePoint(points[bestI]!);
-    startHint.textContent = `Editing: rerouting near km ${atKm.toFixed(1)} — tap where the course should go…`;
-    map.armViaPlacement((p2) => {
-      map.hideCoursePoint();
-      startHint.textContent = 'Rerouting…';
-      send({
-        type: 'editCourse',
-        atKm,
-        to: p2,
-        ...coursePointArrays(result.course),
-        target: targetTransfer(result.profile),
-        desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
-        weights: collectWeights(),
-      });
-    });
+    selectDestination(bestI);
   });
 }
 
@@ -369,15 +429,15 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
             ? `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`
             : `Course updated — mismatch ${msg.course.score.toFixed(1)}.`;
         persistSession();
-        // Stay in editing mode: arm the next tap pair on the updated course.
-        if (editingMode) armEditTap(lastResult);
+        // Stay in editing mode: re-arm on the updated course.
+        if (editingMode) armEditing(lastResult);
       }
       searchDone();
       break;
     }
     case 'noCourse':
+      clearResult();
       startHint.textContent = msg.message;
-      map.clearCourse();
       searchDone();
       break;
     case 'error':
@@ -406,7 +466,6 @@ function setFullProfile(profile: TargetProfile): void {
   gpxStats.hidden = false;
   const label = gpxLabel ? `${gpxLabel}: ` : '';
   gpxStats.textContent = `${label}${(profile.totalDistance / 1000).toFixed(1)} km, +${Math.round(profile.totalGain)} m / \u2212${Math.round(profile.totalLoss)} m`;
-  renderProfileChart(targetChart, [{ samples: profile.samples, color: '#2563eb' }]);
   rangeControl.hidden = false;
   const totalKm = profile.totalDistance / 1000;
   rangeTo.max = totalKm.toFixed(1);
@@ -415,18 +474,38 @@ function setFullProfile(profile: TargetProfile): void {
   if (!rangeTo.value || Number(rangeTo.value) > totalKm) rangeTo.value = totalKm.toFixed(1);
   if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
   updateRangeLabel();
+  clearResult(); // a new race invalidates whatever course was on screen
+  refreshTargetChart();
   updateFindEnabled();
   persistSession();
+}
+
+/** Drop the proposed course: no stats, no advanced stats, no course buttons. */
+function clearResult(): void {
+  if (editingMode) exitEditing();
+  lastResult = null;
+  lastAction = undefined;
+  editHistory.length = 0;
+  hideResult(resultEls);
+  map.clearCourse();
+  map.hideCoursePoint();
+  map.setEditMarkers([]);
 }
 
 function updateRangeLabel(): void {
   rangeLabel.textContent = `${Number(rangeFrom.value).toFixed(1)} – ${Number(rangeTo.value).toFixed(1)} km`;
 }
 
+/** Km last touched on the chart, so a pick can be committed on release. */
+let lastChartKm: number | null = null;
+
 function refreshTargetChart(): void {
   const profile = activeProfile();
   if (!profile) return;
-  renderProfileChart(targetChart, [{ samples: profile.samples, color: '#2563eb' }]);
+  // Scrubbable even without a course, to read off height/grade/distance.
+  renderInteractiveChart(targetChart, profile.samples, null, (i) => {
+    lastChartKm = i === null ? lastChartKm : (i * SAMPLE_STEP_M) / 1000;
+  });
   if (profile !== fullProfile) {
     distanceInput.value = (profile.totalDistance / 1000).toFixed(1);
   }
@@ -482,20 +561,22 @@ function renderVias(): void {
     pick.style.minHeight = '28px';
     pick.style.marginLeft = '8px';
     pick.addEventListener('click', () => {
-      const profile = activeProfile();
-      if (!profile) return;
-      startHint.textContent = 'Tap the elevation chart where this via should be reached…';
-      const onTap = (e: PointerEvent) => {
-        targetChart.removeEventListener('pointerdown', onTap, true);
-        const rect = targetChart.getBoundingClientRect();
-        const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const kmVal = (frac * profile.totalDistance) / 1000;
-        viaPoints[i]!.km = Math.round(kmVal * 10) / 10;
+      if (!activeProfile()) return;
+      // Bring the chart into view, then let the finger slide and commit on release.
+      sheet.restore();
+      targetChart.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      startHint.textContent = 'Slide along the elevation chart and let go at the right km…';
+      const commit = () => {
+        targetChart.removeEventListener('pointerup', commit, true);
+        targetChart.removeEventListener('pointercancel', commit, true);
+        if (lastChartKm === null) return;
+        viaPoints[i]!.km = Math.round(lastChartKm * 10) / 10;
         startHint.textContent = `Via ${i + 1} set to km ${viaPoints[i]!.km}`;
         renderVias();
         persistSession();
       };
-      targetChart.addEventListener('pointerdown', onTap, true);
+      targetChart.addEventListener('pointerup', commit, true);
+      targetChart.addEventListener('pointercancel', commit, true);
     });
     li.appendChild(pick);
     if (i > 0) {
@@ -530,11 +611,14 @@ function renderVias(): void {
 
 addViaButton.addEventListener('click', () => {
   addViaButton.textContent = 'Tap the map to place the via point…';
+  startHint.textContent = 'Tap the map to place the via point…';
+  sheet.collapse(); // get the menu out of the way of the map
   map.armViaPlacement((p) => {
     viaPoints.push({ lat: p.lat, lon: p.lon, km: null });
     addViaButton.textContent = 'Add via point (then tap the map)';
     renderVias();
     persistSession();
+    sheet.restore();
   });
 });
 
@@ -567,7 +651,9 @@ function sendImproveMatched(): void {
     target: targetTransfer(profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),
+    resync: workerCourseStale,
   });
+  workerCourseStale = false;
 }
 
 compareInput.addEventListener('change', async () => {

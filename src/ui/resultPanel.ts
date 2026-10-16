@@ -5,13 +5,17 @@ const SURFACE_NAMES = ['paved', 'gravel', 'trail', 'unknown'];
 
 export interface ResultElements {
   stats: HTMLElement;
+  advanced: HTMLDetailsElement;
+  advancedBody: HTMLElement;
   actions: HTMLElement;
   downloadButton: HTMLButtonElement;
 }
 
 export function hideResult(els: ResultElements): void {
   els.stats.hidden = true;
+  els.advanced.hidden = true;
   els.actions.hidden = true;
+  els.actions.textContent = '';
   els.downloadButton.hidden = true;
 }
 
@@ -19,24 +23,28 @@ export function renderResult(
   els: ResultElements,
   course: CourseResult,
   action: { label: string; onAction: () => void },
-  onEdit?: { editing: boolean; toggle: () => void },
+  onEdit?: { editing: boolean; toggle: () => void; undo?: (() => void) | undefined },
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
     .filter((s) => s !== null)
     .join(', ');
-  const topTerms = Object.entries(course.breakdown ?? {})
-    .filter(([, v]) => v >= 1)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([k, v]) => `${k} ${v.toFixed(1)}`)
-    .join(', ');
   els.stats.hidden = false;
   els.stats.textContent =
     `${(course.lengthM / 1000).toFixed(2)} km, +${Math.round(course.gain)} m / ` +
-    `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} (lower is better` +
-    (topTerms ? `; mostly ${topTerms}` : '') +
-    `) \u00b7 ${split}`;
+    `\u2212${Math.round(course.loss)} m \u00b7 mismatch ${course.score.toFixed(1)} \u00b7 ${split}`;
+
+  const terms = Object.entries(course.breakdown ?? {})
+    .filter(([, v]) => v >= 0.05)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k} ${v.toFixed(1)}`)
+    .join(', ');
+  els.advanced.hidden = false;
+  els.advancedBody.textContent =
+    `Mismatch ${course.score.toFixed(2)} — lower is better, and only comparable between ` +
+    `courses scored with the same weights.` +
+    (terms ? ` Contributions: ${terms}.` : '') +
+    ` Seed ${course.seed}. ${course.exportPoints.length} points at 25 m spacing.`;
 
   els.downloadButton.hidden = false;
   els.downloadButton.onclick = () => {
@@ -63,9 +71,15 @@ export function renderResult(
   if (onEdit) {
     const edit = document.createElement('button');
     edit.textContent = onEdit.editing ? 'Exit editing' : 'Edit';
-    edit.title = 'Editing mode: tap a course point, then tap where it should go; repeat until you exit';
+    edit.title = 'Editing mode: pull the course where you want it, or tap a point then its destination';
     edit.addEventListener('click', onEdit.toggle);
     els.actions.appendChild(edit);
+    if (onEdit.undo) {
+      const undo = document.createElement('button');
+      undo.textContent = 'Undo';
+      undo.addEventListener('click', onEdit.undo);
+      els.actions.appendChild(undo);
+    }
   }
 
   const copyLink = document.createElement('button');

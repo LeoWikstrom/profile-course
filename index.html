@@ -13,8 +13,10 @@
   <body>
     <div id="map"></div>
     <div id="sheet">
-      <div id="sheet-handle" role="button" aria-label="Show or hide the panel" tabindex="0"></div>
-      <button id="download-gpx" hidden title="Download GPX">GPX ⤓</button>
+      <div id="sheet-top">
+        <div id="sheet-handle" role="button" aria-label="Resize the panel" tabindex="0"></div>
+        <button id="download-gpx" hidden title="Download GPX">GPX ⤓</button>
+      </div>
       <section id="controls">
         <h1>Profile Course</h1>
         <label class="control">
@@ -28,6 +30,10 @@
         </label>
         <div id="target-chart"></div>
         <p class="hint" id="course-stats" hidden></p>
+        <details id="course-advanced" hidden>
+          <summary class="hint">Advanced stats</summary>
+          <p class="hint" id="course-advanced-body"></p>
+        </details>
         <div id="course-actions" class="row" hidden></div>
         <button id="find-button" disabled>Find course</button>
         <button id="cancel-button" hidden>Cancel</button>
