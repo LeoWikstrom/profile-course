@@ -89,5 +89,8 @@ Score (lower = better) on 25 m samples:
       cannot remove a via. Resolution is point-to-segment, 25 m radius.
 - [x] **Comparison GPX**: upload an own course, map-matched (connectors on, skip-ahead over
       gaps), scored like a generated course, with an Improve button.
+- [x] **Editing mode**: persistent — Edit arms tap pairs (course point → new location)
+      repeatedly until Exit editing. Each reroute replaces a ±600 m window of the *current*
+      course, so successive edits chain instead of overwriting one another.
 - [ ] **Phase 6 – Later** (optional): Strava personal heatmap, OSM traces, multiple
-      candidates, full node-level course editing (add/delete/move path nodes).
+      candidates, node-level editing (add/delete individual nodes, drag handles, undo).
