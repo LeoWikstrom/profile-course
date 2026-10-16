@@ -36,6 +36,8 @@ export interface MapController {
   setViaMarkers(vias: LatLon[], onMove: (index: number, p: LatLon) => void): void;
   /** Dots showing where the course has already been edited. */
   setEditMarkers(points: LatLon[]): void;
+  /** Dots on every junction of the course, for node editing. */
+  setNodeMarkers(points: LatLon[]): void;
   /**
    * Press on the course and pull it somewhere else. `dragged` is false when the
    * press was really a tap, so the caller can fall back to a two-tap flow.
@@ -114,6 +116,7 @@ export function createMap(container: string): MapController {
   let pointMarker: L.Marker | null = null;
   let viaMarkers: L.Marker[] = [];
   let editMarkers: L.Marker[] = [];
+  let nodeLayer: L.LayerGroup | null = null;
 
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
   let grabCb: ((index: number) => void) | null = null;
@@ -215,6 +218,20 @@ export function createMap(container: string): MapController {
         }).addTo(map),
       );
     },
+    setNodeMarkers(points) {
+      nodeLayer?.remove();
+      nodeLayer = null;
+      if (points.length === 0) return;
+      nodeLayer = L.layerGroup();
+      for (const p of points) {
+        L.marker([p.lat, p.lon], {
+          pane: EDIT_PANE,
+          interactive: false,
+          icon: L.divIcon({ className: 'node-point', iconSize: [10, 10] }),
+        }).addTo(nodeLayer);
+      }
+      nodeLayer.addTo(map);
+    },
     armCourseDrag(points, onPull, onGrab) {
       pullPoints = points;
       pullCb = onPull;
@@ -313,6 +330,8 @@ export function createMap(container: string): MapController {
       courseLayer = null;
       windowBox?.remove();
       windowBox = null;
+      nodeLayer?.remove();
+      nodeLayer = null;
       pointMarker?.remove();
       pointMarker = null;
     },

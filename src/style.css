@@ -327,6 +327,15 @@ progress {
   box-shadow: 0 0 0 1px #fff;
 }
 
+/* Every junction of the course, shown while the node submode is on. */
+.node-point {
+  border-radius: 50%;
+  background: #7c3aed;
+  border: 2px solid #fff;
+  box-shadow: 0 0 2px rgb(0 0 0 / 0.5);
+  animation: marker-in 0.18s ease-out;
+}
+
 .edited-point {
   border-radius: 50%;
   background: #7c3aed;

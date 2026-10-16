@@ -1,6 +1,7 @@
 import { buildTargetProfile, SAMPLE_STEP_M, sliceProfile, type TargetProfile } from './gpx/profile';
 import { parseGpx, type ParsedGpx } from './gpx/parse';
 import { SURFACE_PRESETS } from './search/score';
+import { haversineMeters } from './shared/geo';
 import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
@@ -155,22 +156,41 @@ function refreshEditBar(): void {
 /** Node editing only rewrites the course either side of the node it touches. */
 const NODE_WINDOW_M = 50;
 
+/**
+ * The course's junctions: each segment is one network edge, so the segment
+ * boundaries are exactly the nodes an edit can move or delete.
+ */
+function courseNodes(course: CourseResult): { lat: number; lon: number; km: number }[] {
+  const out: { lat: number; lon: number; km: number }[] = [];
+  let runM = 0;
+  for (const seg of course.segments) {
+    if (out.length === 0) out.push({ lat: seg.lats[0]!, lon: seg.lons[0]!, km: 0 });
+    for (let i = 1; i < seg.lats.length; i++) {
+      runM += haversineMeters(seg.lats[i - 1]!, seg.lons[i - 1]!, seg.lats[i]!, seg.lons[i]!);
+    }
+    const last = seg.lats.length - 1;
+    out.push({ lat: seg.lats[last]!, lon: seg.lons[last]!, km: runM / 1000 });
+  }
+  return out;
+}
+
 function rerouteWindowM(): number {
   if (nodeMode) return NODE_WINDOW_M;
   return Math.max(100, Number(rerouteWindow.value) || 600);
 }
 
-/** The stretch an edit at `index` may rewrite, as course points. */
+/** The stretch an edit at `atKm` may rewrite, as course points. */
 function editWindowPoints(
   points: { lat: number; lon: number }[],
-  index: number,
+  atKm: number,
 ): { lat: number; lon: number }[] {
+  const index = Math.round((atKm * 1000) / SAMPLE_STEP_M);
   const span = Math.round(rerouteWindowM() / SAMPLE_STEP_M);
   return points.slice(Math.max(0, index - span), Math.min(points.length, index + span + 1));
 }
 
-function previewEditWindow(points: { lat: number; lon: number }[], index: number): void {
-  if (showEditWindow.checked) map.showEditWindow(editWindowPoints(points, index));
+function previewEditWindow(points: { lat: number; lon: number }[], atKm: number): void {
+  if (showEditWindow.checked) map.showEditWindow(editWindowPoints(points, atKm));
 }
 
 /**
@@ -206,6 +226,7 @@ function exitEditing(): void {
   map.hideCoursePoint();
   map.hideEditWindow();
   map.setEditMarkers([]);
+  map.setNodeMarkers([]);
   editedPoints = [];
   editHistory.length = 0;
   startHint.textContent = 'Editing finished.';
@@ -260,12 +281,9 @@ function sendEdit(
 function sendDeletePoint(
   result: { course: CourseResult; profile: TargetProfile },
   atKm: number,
+  at: { lat: number; lon: number },
 ): void {
-  const index = Math.min(
-    result.course.exportPoints.length - 1,
-    Math.round((atKm * 1000) / SAMPLE_STEP_M),
-  );
-  beginEdit(result, result.course.exportPoints[index]!);
+  beginEdit(result, at);
   startHint.textContent = `Removing the course point near km ${atKm.toFixed(1)}…`;
   send({ type: 'deleteCoursePoint', atKm, ...editPayload(result) });
   workerCourseStale = false;
@@ -293,16 +311,22 @@ function undoEdit(): void {
 
 function armEditing(result: { course: CourseResult; profile: TargetProfile }): void {
   const points = result.course.exportPoints;
+  // In node mode a grab or tap must land on a junction, so the course's nodes
+  // are both drawn and used as the grabbable points.
+  const nodes = nodeMode ? courseNodes(result.course) : null;
+  const grabPoints = nodes ?? points;
+  const kmAt = (index: number) => nodes?.[index]?.km ?? (index * SAMPLE_STEP_M) / 1000;
   startHint.textContent = nodeMode
-    ? 'Node editing: pull a course point to move it, or tap one to delete it.'
+    ? 'Node editing: pull a highlighted dot to move it, or tap one to delete it.'
     : 'Editing: pull the course where you want it, or tap a point on it.';
   map.setEditMarkers(editedPoints);
+  map.setNodeMarkers(nodes ?? []);
   map.hideEditWindow();
 
   const selectDestination = (index: number) => {
-    const atKm = (index * SAMPLE_STEP_M) / 1000;
-    map.showCoursePoint(points[index]!);
-    previewEditWindow(points, index);
+    const atKm = kmAt(index);
+    map.showCoursePoint(grabPoints[index]!);
+    previewEditWindow(points, atKm);
     // While waiting for the destination, a tap near the course must not be
     // swallowed as a new pull.
     map.disarmCourseDrag();
@@ -311,16 +335,21 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   };
 
   map.armCourseDrag(
-    points,
+    grabPoints,
     (index, to, dragged) => {
-      const atKm = (index * SAMPLE_STEP_M) / 1000;
+      const atKm = kmAt(index);
       if (dragged) sendEdit(result, atKm, to);
-      else if (nodeMode) sendDeletePoint(result, atKm);
+      else if (nodeMode) sendDeletePoint(result, atKm, grabPoints[index]!);
       else selectDestination(index);
     },
-    (index) => previewEditWindow(points, index),
+    (index) => previewEditWindow(points, kmAt(index)),
   );
   map.armViaPlacement((p) => {
+    if (nodeMode) {
+      // Deleting is destructive, so only a tap on a node itself counts.
+      startHint.textContent = 'Node editing: tap one of the highlighted dots to delete it.';
+      return;
+    }
     // A tap away from the course still picks the nearest course point.
     let bestI = 0;
     let bestD = Infinity;
@@ -332,11 +361,6 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
         bestD = d;
         bestI = i;
       }
-    }
-    if (nodeMode) {
-      // Deleting is destructive, so only a tap on the course itself counts.
-      startHint.textContent = 'Node editing: tap a point on the course to delete it.';
-      return;
     }
     selectDestination(bestI);
   });
