@@ -5,6 +5,7 @@ import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderInteractiveChart } from './ui/profileChart';
+import { captureTops, playReorder, slideIn } from './ui/animate';
 import { hideResult, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
 import SearchWorker from './search/worker?worker';
@@ -39,7 +40,9 @@ const resultEls: ResultElements = {
 const editBar = document.getElementById('edit-bar') as HTMLDivElement;
 const editExitButton = document.getElementById('edit-exit') as HTMLButtonElement;
 const editUndoButton = document.getElementById('edit-undo') as HTMLButtonElement;
+const editNodesButton = document.getElementById('edit-nodes') as HTMLButtonElement;
 const rerouteWindow = document.getElementById('reroute-window') as HTMLInputElement;
+const showEditWindow = document.getElementById('show-edit-window') as HTMLInputElement;
 const seedInput = document.getElementById('seed-input') as HTMLInputElement;
 const coordLat = document.getElementById('coord-lat') as HTMLInputElement;
 const coordLon = document.getElementById('coord-lon') as HTMLInputElement;
@@ -140,10 +143,34 @@ function showResult(
   );
 }
 
-/** Exit and Undo sit over the map, within thumb reach while editing. */
+/** Exit, Undo and the node submode sit over the map, within thumb reach. */
 function refreshEditBar(): void {
+  const wasHidden = editBar.hidden;
   editBar.hidden = !editingMode;
   editUndoButton.disabled = editHistory.length === 0;
+  editNodesButton.setAttribute('aria-pressed', String(nodeMode));
+  if (wasHidden && !editBar.hidden) slideIn(editBar);
+}
+
+/** Node editing only rewrites the course either side of the node it touches. */
+const NODE_WINDOW_M = 50;
+
+function rerouteWindowM(): number {
+  if (nodeMode) return NODE_WINDOW_M;
+  return Math.max(100, Number(rerouteWindow.value) || 600);
+}
+
+/** The stretch an edit at `index` may rewrite, as course points. */
+function editWindowPoints(
+  points: { lat: number; lon: number }[],
+  index: number,
+): { lat: number; lon: number }[] {
+  const span = Math.round(rerouteWindowM() / SAMPLE_STEP_M);
+  return points.slice(Math.max(0, index - span), Math.min(points.length, index + span + 1));
+}
+
+function previewEditWindow(points: { lat: number; lon: number }[], index: number): void {
+  if (showEditWindow.checked) map.showEditWindow(editWindowPoints(points, index));
 }
 
 /**
@@ -152,6 +179,8 @@ function refreshEditBar(): void {
  * reroute builds on the previous one, until Exit editing.
  */
 let editingMode = false;
+/** Advanced submode: edits act on single course points instead of stretches. */
+let nodeMode = false;
 let lastAction: { label: string; onAction: () => void } | undefined;
 /** Courses replaced by an edit, newest last, for Undo. */
 const editHistory: { course: CourseResult; profile: TargetProfile }[] = [];
@@ -171,9 +200,11 @@ function toggleEditing(result: { course: CourseResult; profile: TargetProfile })
 
 function exitEditing(): void {
   editingMode = false;
+  nodeMode = false;
   map.disarmViaPlacement();
   map.disarmCourseDrag();
   map.hideCoursePoint();
+  map.hideEditWindow();
   map.setEditMarkers([]);
   editedPoints = [];
   editHistory.length = 0;
@@ -184,30 +215,59 @@ function exitEditing(): void {
 
 editExitButton.addEventListener('click', exitEditing);
 editUndoButton.addEventListener('click', () => undoEdit());
+editNodesButton.addEventListener('click', () => {
+  nodeMode = !nodeMode;
+  refreshEditBar();
+  if (lastResult) armEditing(lastResult);
+});
 
-function sendEdit(
+/** Record the course an edit is about to replace, so Undo can bring it back. */
+function beginEdit(
   result: { course: CourseResult; profile: TargetProfile },
-  atKm: number,
-  to: { lat: number; lon: number },
+  marker: { lat: number; lon: number },
 ): void {
   editHistory.push(result);
-  editedPoints.push(to);
+  editedPoints.push(marker);
   pendingEdit = true;
   map.setEditMarkers(editedPoints);
   map.hideCoursePoint();
-  startHint.textContent = 'Rerouting…';
-  send({
-    type: 'editCourse',
-    atKm,
-    to,
+  map.hideEditWindow();
+}
+
+function editPayload(result: { course: CourseResult; profile: TargetProfile }) {
+  return {
     ...coursePointArrays(result.course),
     target: targetTransfer(result.profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),
     resync: workerCourseStale,
     viaPoints,
-    rerouteWindowM: Math.max(100, Number(rerouteWindow.value) || 600),
-  });
+  };
+}
+
+function sendEdit(
+  result: { course: CourseResult; profile: TargetProfile },
+  atKm: number,
+  to: { lat: number; lon: number },
+): void {
+  beginEdit(result, to);
+  startHint.textContent = 'Rerouting…';
+  send({ type: 'editCourse', atKm, to, ...editPayload(result), rerouteWindowM: rerouteWindowM() });
+  workerCourseStale = false;
+  refreshEditBar();
+}
+
+function sendDeletePoint(
+  result: { course: CourseResult; profile: TargetProfile },
+  atKm: number,
+): void {
+  const index = Math.min(
+    result.course.exportPoints.length - 1,
+    Math.round((atKm * 1000) / SAMPLE_STEP_M),
+  );
+  beginEdit(result, result.course.exportPoints[index]!);
+  startHint.textContent = `Removing the course point near km ${atKm.toFixed(1)}…`;
+  send({ type: 'deleteCoursePoint', atKm, ...editPayload(result) });
   workerCourseStale = false;
   refreshEditBar();
 }
@@ -233,12 +293,16 @@ function undoEdit(): void {
 
 function armEditing(result: { course: CourseResult; profile: TargetProfile }): void {
   const points = result.course.exportPoints;
-  startHint.textContent = 'Editing: pull the course where you want it, or tap a point on it.';
+  startHint.textContent = nodeMode
+    ? 'Node editing: pull a course point to move it, or tap one to delete it.'
+    : 'Editing: pull the course where you want it, or tap a point on it.';
   map.setEditMarkers(editedPoints);
+  map.hideEditWindow();
 
   const selectDestination = (index: number) => {
     const atKm = (index * SAMPLE_STEP_M) / 1000;
     map.showCoursePoint(points[index]!);
+    previewEditWindow(points, index);
     // While waiting for the destination, a tap near the course must not be
     // swallowed as a new pull.
     map.disarmCourseDrag();
@@ -246,10 +310,16 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     map.armViaPlacement((to) => sendEdit(result, atKm, to));
   };
 
-  map.armCourseDrag(points, (index, to, dragged) => {
-    if (dragged) sendEdit(result, (index * SAMPLE_STEP_M) / 1000, to);
-    else selectDestination(index);
-  });
+  map.armCourseDrag(
+    points,
+    (index, to, dragged) => {
+      const atKm = (index * SAMPLE_STEP_M) / 1000;
+      if (dragged) sendEdit(result, atKm, to);
+      else if (nodeMode) sendDeletePoint(result, atKm);
+      else selectDestination(index);
+    },
+    (index) => previewEditWindow(points, index),
+  );
   map.armViaPlacement((p) => {
     // A tap away from the course still picks the nearest course point.
     let bestI = 0;
@@ -262,6 +332,11 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
         bestD = d;
         bestI = i;
       }
+    }
+    if (nodeMode) {
+      // Deleting is destructive, so only a tap on the course itself counts.
+      startHint.textContent = 'Node editing: tap a point on the course to delete it.';
+      return;
     }
     selectDestination(bestI);
   });
@@ -565,12 +640,17 @@ const addViaButton = document.getElementById('add-via') as HTMLButtonElement;
 
 let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
 
+/** Row element per via, by identity, so reordering can be animated. */
+let viaRows = new Map<object, HTMLElement>();
+
 function renderVias(): void {
   map.setViaMarkers(viaPoints, (i, p) => {
     viaPoints[i] = { ...viaPoints[i]!, lat: p.lat, lon: p.lon };
     renderVias();
     persistSession();
   });
+  const wasAt = captureTops(viaRows);
+  viaRows = new Map();
   viaList.textContent = '';
   viaPoints.forEach((v, i) => {
     const li = document.createElement('li');
@@ -637,7 +717,9 @@ function renderVias(): void {
     });
     li.appendChild(del);
     viaList.appendChild(li);
+    viaRows.set(v, li);
   });
+  playReorder(wasAt, viaRows);
   addViaButton.disabled = false;
 }
 

@@ -123,6 +123,50 @@ button {
   border: 1px solid GrayText;
   background: Canvas;
   color: CanvasText;
+  transition:
+    background-color 0.15s ease,
+    transform 0.08s ease;
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Appearing when a course arrives: display changes restart the animation. */
+#course-stats,
+#course-advanced,
+#course-actions {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Leaflet positions divIcons with inline transforms, so markers only fade. */
+@keyframes marker-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 button:not(:disabled) {
@@ -150,6 +194,11 @@ button:not(:disabled) {
 #edit-bar > button:disabled {
   background: Canvas;
   color: GrayText;
+}
+
+#edit-bar > button[aria-pressed='true'] {
+  background: #7c3aed;
+  border-color: #7c3aed;
 }
 
 #download-gpx {
@@ -283,6 +332,11 @@ progress {
   background: #7c3aed;
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  animation: marker-in 0.18s ease-out;
+}
+
+.edit-window {
+  animation: marker-in 0.15s ease-out;
 }
 
 @media (min-width: 900px) {

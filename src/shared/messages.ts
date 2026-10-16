@@ -109,6 +109,18 @@ export type MainToWorker =
       rerouteWindowM?: number;
     }
   | {
+      /** Node-level editing: drop the course node nearest `atKm`. */
+      type: 'deleteCoursePoint';
+      atKm: number;
+      lats: Float64Array;
+      lons: Float64Array;
+      target: TargetTransfer;
+      desiredMix: [number, number, number, number] | null;
+      weights: Record<string, number> | null;
+      resync?: boolean;
+      viaPoints?: ViaPoint[];
+    }
+  | {
       /** Run the improvement pass on the current course. */
       type: 'improveCourse';
       lats: Float64Array;

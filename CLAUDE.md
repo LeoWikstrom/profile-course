@@ -95,6 +95,9 @@ Score (lower = better) on 25 m samples:
       chain; the window start is chosen so the new point is reached near the km that was picked,
       and the end so the course keeps its length. Via points outrank edits: the window shrinks
       rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
+      A translucent box outlines the window being rewritten (toggleable). **Node submode**
+      ("Nodes" in the edit bar): the window shrinks to ±50 m, so a pull moves a single course
+      point, and a tap deletes the nearest one and closes the gap with a detour around it.
 - [ ] **Multiple candidates** (next): keep the top N courses from one search and switch between
       them with tabs at the top of the panel, plus a desktop keyboard shortcut.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava

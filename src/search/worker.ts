@@ -23,7 +23,7 @@ import type {
 } from '../shared/messages';
 import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
-import { DEFAULT_WINDOW_M, reroutePath } from './edit';
+import { DEFAULT_WINDOW_M, deleteNodeFromPath, reroutePath } from './edit';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
@@ -542,6 +542,40 @@ async function editCourse(
         : 'Could not route the course through that point',
     );
   }
+  postEdited(g, newPath, target, desiredMix, weightsIn);
+}
+
+async function deleteCoursePoint(
+  atKm: number,
+  lats: Float64Array,
+  lons: Float64Array,
+  target: TargetTransfer,
+  desiredMix: [number, number, number, number] | null,
+  weightsIn: Record<string, number> | null,
+  resync: boolean,
+  viaPoints: ViaPoint[],
+): Promise<void> {
+  const currentPath = await ensureCurrentPath(lats, lons, resync);
+  const g = graph!;
+  const keep = viaKeepSets(g, viaPoints);
+  const newPath = deleteNodeFromPath(g, currentPath, atKm * 1000, {
+    keepNodes: keep.nodes,
+    keepEdges: keep.edges,
+  });
+  if (!newPath) {
+    throw new Error('That point cannot be removed: it is a via, an end, or has no way round it');
+  }
+  postEdited(g, newPath, target, desiredMix, weightsIn);
+}
+
+/** Score an edited path and send it back as the current course. */
+function postEdited(
+  g: Graph,
+  newPath: CoursePath,
+  target: TargetTransfer,
+  desiredMix: [number, number, number, number] | null,
+  weightsIn: Record<string, number> | null,
+): void {
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
   const course = assembleCourse(g, newPath);
   const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
@@ -656,6 +690,20 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.resync ?? false,
         msg.viaPoints ?? [],
         msg.rerouteWindowM ?? DEFAULT_WINDOW_M,
+      ).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    case 'deleteCoursePoint':
+      deleteCoursePoint(
+        msg.atKm,
+        msg.lats,
+        msg.lons,
+        msg.target,
+        msg.desiredMix,
+        msg.weights,
+        msg.resync ?? false,
+        msg.viaPoints ?? [],
       ).catch((err: unknown) =>
         post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

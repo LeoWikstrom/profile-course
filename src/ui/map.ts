@@ -43,8 +43,12 @@ export interface MapController {
   armCourseDrag(
     points: LatLon[],
     onPull: (index: number, to: LatLon, dragged: boolean) => void,
+    onGrab?: (index: number) => void,
   ): void;
   disarmCourseDrag(): void;
+  /** Translucent box over the stretch an edit may rewrite. */
+  showEditWindow(points: LatLon[]): void;
+  hideEditWindow(): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
   /** Km labels and running-direction arrows along ~25 m-spaced course points. */
   decorateCourse(points: { lat: number; lon: number }[]): void;
@@ -112,6 +116,8 @@ export function createMap(container: string): MapController {
   let editMarkers: L.Marker[] = [];
 
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
+  let grabCb: ((index: number) => void) | null = null;
+  let windowBox: L.Rectangle | null = null;
   let pullPoints: LatLon[] = [];
   let pullIndex = -1;
   let pullStart: { x: number; y: number } | null = null;
@@ -142,6 +148,7 @@ export function createMap(container: string): MapController {
     pullStart = { x: e.clientX, y: e.clientY };
     map.dragging.disable();
     mapEl.setPointerCapture(e.pointerId);
+    grabCb?.(i);
   });
 
   mapEl.addEventListener('pointermove', (e) => {
@@ -208,13 +215,49 @@ export function createMap(container: string): MapController {
         }).addTo(map),
       );
     },
-    armCourseDrag(points, onPull) {
+    armCourseDrag(points, onPull, onGrab) {
       pullPoints = points;
       pullCb = onPull;
+      grabCb = onGrab ?? null;
     },
     disarmCourseDrag() {
       pullCb = null;
+      grabCb = null;
       pullPoints = [];
+    },
+    showEditWindow(points) {
+      if (points.length === 0) return;
+      let minLat = Infinity;
+      let maxLat = -Infinity;
+      let minLon = Infinity;
+      let maxLon = -Infinity;
+      for (const p of points) {
+        minLat = Math.min(minLat, p.lat);
+        maxLat = Math.max(maxLat, p.lat);
+        minLon = Math.min(minLon, p.lon);
+        maxLon = Math.max(maxLon, p.lon);
+      }
+      const bounds: L.LatLngBoundsLiteral = [
+        [minLat, minLon],
+        [maxLat, maxLon],
+      ];
+      if (windowBox) {
+        windowBox.setBounds(bounds);
+        return;
+      }
+      windowBox = L.rectangle(bounds, {
+        pane: EDIT_PANE,
+        interactive: false,
+        color: '#7c3aed',
+        weight: 1,
+        dashArray: '4 4',
+        fillOpacity: 0.12,
+        className: 'edit-window',
+      }).addTo(map);
+    },
+    hideEditWindow() {
+      windowBox?.remove();
+      windowBox = null;
     },
     drawCourse(segments, options) {
       courseLayer?.remove();
@@ -268,6 +311,8 @@ export function createMap(container: string): MapController {
     clearCourse() {
       courseLayer?.remove();
       courseLayer = null;
+      windowBox?.remove();
+      windowBox = null;
       pointMarker?.remove();
       pointMarker = null;
     },

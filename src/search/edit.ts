@@ -112,3 +112,50 @@ export function reroutePath(
     dirs: [...path.dirs.slice(0, fromIdx), ...leg1.dirs, ...leg2.dirs, ...path.dirs.slice(toIdx)],
   };
 }
+
+/**
+ * Drop the course node nearest `atM` and close the gap with the best detour
+ * around it — node-level editing's delete. Returns null when the node carries a
+ * via, is an endpoint, or has no way round it.
+ */
+export function deleteNodeFromPath(
+  graph: Graph,
+  path: CoursePath,
+  atM: number,
+  options: Pick<RerouteOptions, 'keepNodes' | 'keepEdges'> = {},
+): CoursePath | null {
+  const nodes = pathNodes(graph, path, pathRoot(graph, path));
+  if (nodes.length < 4) return null;
+  const cum: number[] = [0];
+  for (const ei of path.edges) cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
+
+  let at = 1;
+  for (let i = 1; i < nodes.length - 1; i++) {
+    if (Math.abs(cum[i]! - atM) < Math.abs(cum[at]! - atM)) at = i;
+  }
+  const victim = nodes[at]!;
+  if (options.keepNodes?.has(victim)) return null;
+  if (options.keepEdges?.has(path.edges[at - 1]!) || options.keepEdges?.has(path.edges[at]!)) {
+    return null;
+  }
+
+  const from = nodes[at - 1]!;
+  const to = nodes[at + 1]!;
+  const removedM = cum[at + 1]! - cum[at - 1]!;
+  const detour = reconstructPath(
+    graph,
+    dijkstra(graph, [from], {
+      target: to,
+      maxDist: Math.max(800, removedM * 6),
+      excludedNodes: new Set([victim]),
+    }),
+    from,
+    to,
+  );
+  if (!detour) return null;
+
+  return {
+    edges: [...path.edges.slice(0, at - 1), ...detour.edges, ...path.edges.slice(at + 1)],
+    dirs: [...path.dirs.slice(0, at - 1), ...detour.dirs, ...path.dirs.slice(at + 1)],
+  };
+}

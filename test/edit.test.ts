@@ -13,7 +13,7 @@ import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { buildProfileFromSamples } from '../src/gpx/profile';
 import { beamSearch } from '../src/search/beam';
-import { pathRoot, reroutePath } from '../src/search/edit';
+import { deleteNodeFromPath, pathRoot, reroutePath } from '../src/search/edit';
 import { assembleCourse } from '../src/search/score';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
@@ -102,6 +102,36 @@ describe('reroutePath', () => {
     });
     expect(kept).not.toBeNull();
     expect(pathNodes(graph, kept!, pathRoot(graph, kept!))).toContain(viaNode);
+  });
+});
+
+describe('deleteNodeFromPath', () => {
+  it('removes a course node and closes the gap around it', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
+    const cum = cumLengths(course.path);
+
+    let at = 1;
+    for (let i = 1; i < nodes.length - 1; i++) {
+      if (Math.abs(cum[i]! - 700) < Math.abs(cum[at]! - 700)) at = i;
+    }
+    const victim = nodes[at]!;
+
+    const trimmed = deleteNodeFromPath(graph, course.path, cum[at]!);
+    expect(trimmed).not.toBeNull();
+    const after = pathNodes(graph, trimmed!, pathRoot(graph, trimmed!));
+    const visits = (list: number[]) => list.filter((n) => n === victim).length;
+    // A loop course can pass the node twice; only the chosen visit goes.
+    expect(visits(after)).toBe(visits(nodes) - 1);
+    expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
+    expect(assembleCourse(graph, trimmed!).lengthM).toBeGreaterThan(200);
+
+    // A via on that node outranks the delete.
+    expect(
+      deleteNodeFromPath(graph, course.path, cum[at]!, { keepNodes: new Set([victim]) }),
+    ).toBeNull();
   });
 });
 
