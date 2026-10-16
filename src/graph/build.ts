@@ -250,7 +250,10 @@ function segmentsIntersect(
   return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
-export function buildGraph(response: OverpassResponse): Graph {
+export function buildGraph(
+  response: OverpassResponse,
+  opts: { connectors?: boolean } = {},
+): Graph {
   const nodeCoord = new Map<number, { lat: number; lon: number }>();
   const signalNodes = new Set<number>();
   const ways: OverpassWay[] = [];
@@ -275,7 +278,7 @@ export function buildGraph(response: OverpassResponse): Graph {
     for (const id of way.nodes) usage.set(id, (usage.get(id) ?? 0) + 1);
   }
 
-  connectCrossings(ways, separators, nodeCoord, usage);
+  if (opts.connectors !== false) connectCrossings(ways, separators, nodeCoord, usage);
 
   const graphNodeIndex = new Map<number, number>();
   const nodeLats: number[] = [];

@@ -64,6 +64,22 @@ export type MainToWorker =
       /** Overrides merged over DEFAULT_WEIGHTS (advanced settings). */
       weights: Record<string, number> | null;
     }
+  | {
+      /** Map-match an uploaded course and score it against the target. */
+      type: 'matchCourse';
+      lats: Float64Array;
+      lons: Float64Array;
+      target: TargetTransfer;
+      desiredMix: [number, number, number, number] | null;
+      weights: Record<string, number> | null;
+    }
+  | {
+      /** Run the improvement pass on the last matched course. */
+      type: 'improveCourse';
+      target: TargetTransfer;
+      desiredMix: [number, number, number, number] | null;
+      weights: Record<string, number> | null;
+    }
   | { type: 'cancel' };
 
 export type WorkerToMain =
@@ -80,5 +96,6 @@ export type WorkerToMain =
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
   | { type: 'result'; course: CourseResult }
+  | { type: 'matched'; course: CourseResult; snappedFraction: number; improvable: boolean }
   | { type: 'noCourse'; message: string }
   | { type: 'error'; message: string };

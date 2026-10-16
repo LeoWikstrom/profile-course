@@ -20,10 +20,11 @@ import type {
   TargetTransfer,
   WorkerToMain,
 } from '../shared/messages';
+import { matchTrackToGraph } from '../graph/match';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
-import { DEFAULT_WEIGHTS, type CoursePath } from './score';
+import { assembleCourse, scoreCourse, DEFAULT_WEIGHTS, MIX_ROAD, type CoursePath } from './score';
 
 function post(msg: WorkerToMain): void {
   postMessage(msg);
@@ -74,6 +75,10 @@ let startNode = -1;
 let validEnd: Uint8Array | null = null;
 let preparedKey = '';
 let cancelled = false;
+
+/** Last map-matched uploaded course, for the Improve button. */
+let matchedPath: CoursePath | null = null;
+let matchedKey = '';
 
 /** The course may leave the radius; cap how wide a network we are willing to pull. */
 const MAX_GRAPH_RADIUS_M = 15_000;
@@ -291,6 +296,73 @@ async function search(
   post({ type: 'result', course: toResult(g, improved[0]!, seed) });
 }
 
+async function matchCourse(
+  lats: Float64Array,
+  lons: Float64Array,
+  target: TargetTransfer,
+  desiredMix: [number, number, number, number] | null,
+  weightsIn: Record<string, number> | null,
+): Promise<void> {
+  // Graph area from the course's own bounding box.
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (let i = 0; i < lats.length; i++) {
+    minLat = Math.min(minLat, lats[i]!);
+    maxLat = Math.max(maxLat, lats[i]!);
+    minLon = Math.min(minLon, lons[i]!);
+    maxLon = Math.max(maxLon, lons[i]!);
+  }
+  const center = { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
+  const halfDiag =
+    haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
+  await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0);
+  const g = graph!;
+
+  post({ type: 'progress', stage: 'matching course', fraction: 0.8, bestScore: null });
+  const { path, snappedFraction } = matchTrackToGraph(g, lats, lons);
+  const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
+  const course = assembleCourse(g, path);
+  const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
+  matchedPath = path;
+  matchedKey = preparedKey;
+  post({
+    type: 'matched',
+    course: toResult(g, { path, course, score }, 0),
+    snappedFraction,
+    improvable: true,
+  });
+}
+
+async function improveMatched(
+  target: TargetTransfer,
+  desiredMix: [number, number, number, number] | null,
+  weightsIn: Record<string, number> | null,
+): Promise<void> {
+  if (!matchedPath || !graph || matchedKey !== preparedKey) {
+    throw new Error('No matched course in memory — upload the course GPX again.');
+  }
+  cancelled = false;
+  const g = graph;
+  const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
+  const course = assembleCourse(g, matchedPath);
+  const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
+  post({ type: 'progress', stage: 'improving', fraction: 0.5, bestScore: score });
+  const improved = await improveCandidates(
+    g,
+    startNode,
+    [{ path: matchedPath, course, score }],
+    target,
+    course.lengthM,
+    { desiredMix: desiredMix ?? MIX_ROAD, weights, maxCandidates: 1, passes: 6, shouldCancel: () => cancelled },
+  );
+  matchedPath = improved[0]!.path;
+  post({
+    type: 'matched',
+    course: toResult(g, improved[0]!, 0),
+    snappedFraction: 1,
+    improvable: true,
+  });
+}
+
 onmessage = (event: MessageEvent<MainToWorker>) => {
   const msg = event.data;
   switch (msg.type) {
@@ -328,6 +400,17 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       deleteArea(msg.id)
         .then((areas) => post({ type: 'areas', areas }))
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
+      break;
+    case 'matchCourse':
+      matchCourse(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+        (err: unknown) =>
+          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    case 'improveCourse':
+      improveMatched(msg.target, msg.desiredMix, msg.weights).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
       break;
     case 'cancel':
       cancelled = true;

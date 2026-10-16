@@ -99,7 +99,10 @@ function persistSession(): void {
   });
 }
 
-function showResult(result: { course: CourseResult; profile: TargetProfile }): void {
+function showResult(
+  result: { course: CourseResult; profile: TargetProfile },
+  action?: { label: string; onAction: () => void },
+): void {
   map.drawCourse(result.course.segments);
   map.decorateCourse(result.course.exportPoints);
   const points = result.course.exportPoints;
@@ -108,11 +111,18 @@ function showResult(result: { course: CourseResult; profile: TargetProfile }): v
     if (i === null) map.hideCoursePoint();
     else map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
   });
-  renderResult(resultEls, result.course, () => {
-    seed += 1;
-    seedInput.value = String(seed);
-    startSearch();
-  });
+  renderResult(
+    resultEls,
+    result.course,
+    action ?? {
+      label: 'Try another',
+      onAction: () => {
+        seed += 1;
+        seedInput.value = String(seed);
+        startSearch();
+      },
+    },
+  );
 }
 
 /** The profile actually searched for: the race window, rebased. */
@@ -278,6 +288,19 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       searchDone();
       break;
     }
+    case 'matched': {
+      const profile = activeProfile();
+      if (profile) {
+        lastResult = { course: msg.course, profile };
+        showResult(lastResult, { label: 'Improve this course', onAction: sendImproveMatched });
+        if (msg.snappedFraction < 0.9) {
+          startHint.textContent = `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`;
+        }
+        persistSession();
+      }
+      searchDone();
+      break;
+    }
     case 'noCourse':
       startHint.textContent = msg.message;
       map.clearCourse();
@@ -349,6 +372,57 @@ rangeTo.addEventListener('input', () => {
   }
   updateRangeLabel();
   refreshTargetChart();
+});
+
+const compareInput = document.getElementById('compare-input') as HTMLInputElement;
+
+function targetTransfer(profile: TargetProfile) {
+  return {
+    totalDistance: profile.totalDistance,
+    samples: profile.samples,
+    totalGain: profile.totalGain,
+    totalLoss: profile.totalLoss,
+    gradientHistogram: profile.gradientHistogram,
+    turnsPerKm: profile.turnsPerKm,
+  };
+}
+
+function sendImproveMatched(): void {
+  const profile = activeProfile();
+  if (!profile) return;
+  findButton.disabled = true;
+  findButton.textContent = 'Improving…';
+  send({
+    type: 'improveCourse',
+    target: targetTransfer(profile),
+    desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
+    weights: collectWeights(),
+  });
+}
+
+compareInput.addEventListener('change', async () => {
+  const file = compareInput.files?.[0];
+  const profile = activeProfile();
+  if (!file) return;
+  if (!profile) {
+    startHint.textContent = 'Load the race GPX first, then the comparison course.';
+    return;
+  }
+  try {
+    const gpx = parseGpx(await file.text());
+    findButton.disabled = true;
+    findButton.textContent = 'Matching course…';
+    send({
+      type: 'matchCourse',
+      lats: new Float64Array(gpx.points.map((p) => p.lat)),
+      lons: new Float64Array(gpx.points.map((p) => p.lon)),
+      target: targetTransfer(profile),
+      desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
+      weights: collectWeights(),
+    });
+  } catch (err) {
+    startHint.textContent = err instanceof Error ? err.message : String(err);
+  }
 });
 
 gpxInput.addEventListener('change', async () => {

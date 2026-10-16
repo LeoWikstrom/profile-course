@@ -18,7 +18,7 @@ export function hideResult(els: ResultElements): void {
 export function renderResult(
   els: ResultElements,
   course: CourseResult,
-  onTryAnother: () => void,
+  action: { label: string; onAction: () => void },
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
@@ -46,10 +46,10 @@ export function renderResult(
 
   els.actions.hidden = false;
   els.actions.textContent = '';
-  const tryAnother = document.createElement('button');
-  tryAnother.textContent = 'Try another';
-  tryAnother.addEventListener('click', onTryAnother);
-  els.actions.appendChild(tryAnother);
+  const actionButton = document.createElement('button');
+  actionButton.textContent = action.label;
+  actionButton.addEventListener('click', action.onAction);
+  els.actions.appendChild(actionButton);
 
   const copyLink = document.createElement('button');
   copyLink.textContent = 'Copy link';
