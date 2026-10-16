@@ -464,22 +464,44 @@ async function matchCourse(
   });
 }
 
+/**
+ * Returns the current course path, rebuilding worker state from the course's
+ * own points when memory was lost (page reload, session restore).
+ */
+async function ensureCurrentPath(lats: Float64Array, lons: Float64Array): Promise<CoursePath> {
+  if (matchedPath && graph && matchedKey === preparedKey) return matchedPath;
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (let i = 0; i < lats.length; i++) {
+    minLat = Math.min(minLat, lats[i]!);
+    maxLat = Math.max(maxLat, lats[i]!);
+    minLon = Math.min(minLon, lons[i]!);
+    maxLon = Math.max(maxLon, lons[i]!);
+  }
+  const center = { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
+  const halfDiag = haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
+  await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0, true);
+  const { path } = matchTrackToGraph(graph!, lats, lons);
+  matchedPath = path;
+  matchedKey = preparedKey;
+  return path;
+}
+
 async function editCourse(
   atKm: number,
   to: LatLon,
+  lats: Float64Array,
+  lons: Float64Array,
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
-  if (!matchedPath || !graph || matchedKey !== preparedKey) {
-    throw new Error('No course in memory to edit — generate or match one first.');
-  }
-  const g = graph;
+  const currentPath = await ensureCurrentPath(lats, lons);
+  const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, 60);
   if (targetNode < 0) {
     throw new Error('No path within 60 m of the tapped point');
   }
-  const newPath = reroutePath(g, matchedPath, atKm * 1000, targetNode);
+  const newPath = reroutePath(g, currentPath, atKm * 1000, targetNode);
   if (!newPath) {
     throw new Error('Could not route the course through that point');
   }
@@ -501,23 +523,23 @@ async function editCourse(
 }
 
 async function improveMatched(
+  lats: Float64Array,
+  lons: Float64Array,
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
-  if (!matchedPath || !graph || matchedKey !== preparedKey) {
-    throw new Error('No matched course in memory — upload the course GPX again.');
-  }
+  const currentPath = await ensureCurrentPath(lats, lons);
   cancelled = false;
-  const g = graph;
+  const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
-  const course = assembleCourse(g, matchedPath);
+  const course = assembleCourse(g, currentPath);
   const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
   post({ type: 'progress', stage: 'improving', fraction: 0.5, bestScore: score });
   const improved = await improveCandidates(
     g,
     startNode,
-    [{ path: matchedPath, course, score }],
+    [{ path: currentPath, course, score }],
     target,
     course.lengthM,
     { desiredMix: desiredMix ?? MIX_ROAD, weights, maxCandidates: 1, passes: 6, shouldCancel: () => cancelled },
@@ -585,13 +607,15 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       );
       break;
     case 'editCourse':
-      editCourse(msg.atKm, msg.to, msg.target, msg.desiredMix, msg.weights).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      editCourse(msg.atKm, msg.to, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+        (err: unknown) =>
+          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'improveCourse':
-      improveMatched(msg.target, msg.desiredMix, msg.weights).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+        (err: unknown) =>
+          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'cancel':

@@ -156,6 +156,7 @@ function startEdit(result: { course: CourseResult; profile: TargetProfile }): vo
         type: 'editCourse',
         atKm,
         to: p2,
+        ...coursePointArrays(result.course),
         target: targetTransfer(result.profile),
         desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
         weights: collectWeights(),
@@ -520,13 +521,21 @@ function targetTransfer(profile: TargetProfile) {
   };
 }
 
+function coursePointArrays(course: CourseResult): { lats: Float64Array; lons: Float64Array } {
+  return {
+    lats: new Float64Array(course.exportPoints.map((p) => p.lat)),
+    lons: new Float64Array(course.exportPoints.map((p) => p.lon)),
+  };
+}
+
 function sendImproveMatched(): void {
   const profile = activeProfile();
-  if (!profile) return;
+  if (!profile || !lastResult) return;
   findButton.disabled = true;
   findButton.textContent = 'Improving…';
   send({
     type: 'improveCourse',
+    ...coursePointArrays(lastResult.course),
     target: targetTransfer(profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),

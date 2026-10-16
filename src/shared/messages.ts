@@ -95,13 +95,18 @@ export type MainToWorker =
       type: 'editCourse';
       atKm: number;
       to: LatLon;
+      /** The course's own points, to rebuild worker state after reloads. */
+      lats: Float64Array;
+      lons: Float64Array;
       target: TargetTransfer;
       desiredMix: [number, number, number, number] | null;
       weights: Record<string, number> | null;
     }
   | {
-      /** Run the improvement pass on the last matched course. */
+      /** Run the improvement pass on the current course. */
       type: 'improveCourse';
+      lats: Float64Array;
+      lons: Float64Array;
       target: TargetTransfer;
       desiredMix: [number, number, number, number] | null;
       weights: Record<string, number> | null;
