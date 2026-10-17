@@ -42,6 +42,7 @@ const editBar = document.getElementById('edit-bar') as HTMLDivElement;
 const editExitButton = document.getElementById('edit-exit') as HTMLButtonElement;
 const editUndoButton = document.getElementById('edit-undo') as HTMLButtonElement;
 const editNodesButton = document.getElementById('edit-nodes') as HTMLButtonElement;
+const editStatus = document.getElementById('edit-status') as HTMLParagraphElement;
 const rerouteWindow = document.getElementById('reroute-window') as HTMLInputElement;
 const showEditWindow = document.getElementById('show-edit-window') as HTMLInputElement;
 const seedInput = document.getElementById('seed-input') as HTMLInputElement;
@@ -144,6 +145,13 @@ function showResult(
   );
 }
 
+/** Editing feedback also goes over the map, since the sheet may be collapsed. */
+function setEditStatus(text: string): void {
+  startHint.textContent = text;
+  editStatus.textContent = text;
+  editStatus.hidden = !editingMode;
+}
+
 /** Exit, Undo and the node submode sit over the map, within thumb reach. */
 function refreshEditBar(): void {
   const wasHidden = editBar.hidden;
@@ -152,9 +160,6 @@ function refreshEditBar(): void {
   editNodesButton.setAttribute('aria-pressed', String(nodeMode));
   if (wasHidden && !editBar.hidden) slideIn(editBar);
 }
-
-/** Node editing only rewrites the course either side of the node it touches. */
-const NODE_WINDOW_M = 50;
 
 /**
  * The course's junctions: each segment is one network edge, so the segment
@@ -175,7 +180,6 @@ function courseNodes(course: CourseResult): { lat: number; lon: number; km: numb
 }
 
 function rerouteWindowM(): number {
-  if (nodeMode) return NODE_WINDOW_M;
   return Math.max(100, Number(rerouteWindow.value) || 600);
 }
 
@@ -190,7 +194,8 @@ function editWindowPoints(
 }
 
 function previewEditWindow(points: { lat: number; lon: number }[], atKm: number): void {
-  if (showEditWindow.checked) map.showEditWindow(editWindowPoints(points, atKm));
+  // A node edit reaches to its neighbours, which the drag preview already draws.
+  if (showEditWindow.checked && !nodeMode) map.showEditWindow(editWindowPoints(points, atKm));
 }
 
 /**
@@ -230,6 +235,7 @@ function exitEditing(): void {
   editedPoints = [];
   editHistory.length = 0;
   startHint.textContent = 'Editing finished.';
+  editStatus.hidden = true;
   if (lastResult) showResult(lastResult, lastAction);
   refreshEditBar();
 }
@@ -272,20 +278,29 @@ function sendEdit(
   to: { lat: number; lon: number },
 ): void {
   beginEdit(result, to);
-  startHint.textContent = 'Rerouting…';
+  setEditStatus('Rerouting…');
   send({ type: 'editCourse', atKm, to, ...editPayload(result), rerouteWindowM: rerouteWindowM() });
   workerCourseStale = false;
   refreshEditBar();
 }
 
-function sendDeletePoint(
+/** Node editing: move, delete or add the course point near `atKm`. */
+function sendNodeEdit(
   result: { course: CourseResult; profile: TargetProfile },
+  op: 'move' | 'delete' | 'add',
   atKm: number,
-  at: { lat: number; lon: number },
+  to: { lat: number; lon: number } | null,
+  marker: { lat: number; lon: number },
 ): void {
-  beginEdit(result, at);
-  startHint.textContent = `Removing the course point near km ${atKm.toFixed(1)}…`;
-  send({ type: 'deleteCoursePoint', atKm, ...editPayload(result) });
+  beginEdit(result, marker);
+  const what =
+    op === 'move'
+      ? `Moving the point at km ${atKm.toFixed(1)}…`
+      : op === 'delete'
+        ? `Removing the point at km ${atKm.toFixed(1)}…`
+        : `Adding a point near km ${atKm.toFixed(1)}…`;
+  setEditStatus(what);
+  send({ type: 'nodeEdit', op, atKm, to, ...editPayload(result) });
   workerCourseStale = false;
   refreshEditBar();
 }
@@ -316,9 +331,11 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   const nodes = nodeMode ? courseNodes(result.course) : null;
   const grabPoints = nodes ?? points;
   const kmAt = (index: number) => nodes?.[index]?.km ?? (index * SAMPLE_STEP_M) / 1000;
-  startHint.textContent = nodeMode
-    ? 'Node editing: pull a highlighted dot to move it, or tap one to delete it.'
-    : 'Editing: pull the course where you want it, or tap a point on it.';
+  setEditStatus(
+    nodeMode
+      ? 'Nodes: pull a dot to move it, tap a dot to delete it, tap elsewhere to add one.'
+      : 'Editing: pull the course where you want it, or tap a point on it.',
+  );
   map.setEditMarkers(editedPoints);
   map.setNodeMarkers(nodes ?? []);
   map.hideEditWindow();
@@ -330,15 +347,17 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     // While waiting for the destination, a tap near the course must not be
     // swallowed as a new pull.
     map.disarmCourseDrag();
-    startHint.textContent = `Editing: rerouting near km ${atKm.toFixed(1)} — tap where the course should go…`;
+    setEditStatus(`Editing near km ${atKm.toFixed(1)} — tap where the course should go…`);
     map.armViaPlacement((to) => sendEdit(result, atKm, to));
   };
 
   map.armCourseDrag(grabPoints, {
     onPull: (index, to, dragged) => {
       const atKm = kmAt(index);
-      if (dragged) sendEdit(result, atKm, to);
-      else if (nodeMode) sendDeletePoint(result, atKm, grabPoints[index]!);
+      if (nodeMode) {
+        if (dragged) sendNodeEdit(result, 'move', atKm, to, to);
+        else sendNodeEdit(result, 'delete', atKm, null, grabPoints[index]!);
+      } else if (dragged) sendEdit(result, atKm, to);
       else selectDestination(index);
     },
     onGrab: (index) => previewEditWindow(points, kmAt(index)),
@@ -355,11 +374,6 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     },
   });
   map.armViaPlacement((p) => {
-    if (nodeMode) {
-      // Deleting is destructive, so only a tap on a node itself counts.
-      startHint.textContent = 'Node editing: tap one of the highlighted dots to delete it.';
-      return;
-    }
     // A tap away from the course still picks the nearest course point.
     let bestI = 0;
     let bestD = Infinity;
@@ -372,7 +386,9 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
         bestI = i;
       }
     }
-    selectDestination(bestI);
+    // Away from any dot, a tap in node mode adds a point on the nearest leg.
+    if (nodeMode) sendNodeEdit(result, 'add', (bestI * SAMPLE_STEP_M) / 1000, p, p);
+    else selectDestination(bestI);
   });
 }
 
@@ -380,7 +396,10 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
 function activeProfile(): TargetProfile | null {
   if (!fullProfile) return null;
   const fromM = Math.max(0, Number(rangeFrom.value) * 1000 || 0);
-  const toM = Math.min(fullProfile.totalDistance, Number(rangeTo.value) * 1000 || fullProfile.totalDistance);
+  const toM = Math.min(
+    fullProfile.totalDistance,
+    Number(rangeTo.value) * 1000 || fullProfile.totalDistance,
+  );
   if (fromM <= 0 && toM >= fullProfile.totalDistance) return fullProfile;
   if (toM - fromM < 500) return fullProfile;
   return sliceProfile(fullProfile, fromM, toM);
@@ -458,8 +477,7 @@ function startSearch(): void {
     startAtPoint: !startAnywhereToggle.checked || returnToggle.checked,
     weights: collectWeights(),
     connectors: connectorsToggle.checked,
-    beamWidth:
-      Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
+    beamWidth: Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
     viaPoints,
     viaToleranceKm:
       Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 1,
@@ -552,14 +570,16 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (profile) {
         lastResult = { course: msg.course, profile };
         showResult(lastResult, { label: 'Improve this course', onAction: sendImproveMatched });
-        startHint.textContent =
+        const summary =
           msg.snappedFraction < 0.9
             ? `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`
             : `Course updated — mismatch ${msg.course.score.toFixed(1)}.`;
+        startHint.textContent = summary;
         persistSession();
         // Stay in editing mode: re-arm on the updated course.
         if (editingMode) {
           armEditing(lastResult);
+          setEditStatus(summary);
           refreshEditBar();
         }
       }
@@ -573,7 +593,8 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     case 'error':
       console.warn('worker:', msg.message);
-      startHint.textContent = msg.message;
+      if (editingMode) setEditStatus(msg.message);
+      else startHint.textContent = msg.message;
       if (pendingEdit) {
         // The reroute failed, so the course is unchanged: drop the entry and
         // marker that were added in anticipation.

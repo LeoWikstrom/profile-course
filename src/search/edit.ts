@@ -108,54 +108,156 @@ export function reroutePath(
   const leg1 = reversed(back);
 
   return {
-    edges: [...path.edges.slice(0, fromIdx), ...leg1.edges, ...leg2.edges, ...path.edges.slice(toIdx)],
+    edges: [
+      ...path.edges.slice(0, fromIdx),
+      ...leg1.edges,
+      ...leg2.edges,
+      ...path.edges.slice(toIdx),
+    ],
     dirs: [...path.dirs.slice(0, fromIdx), ...leg1.dirs, ...leg2.dirs, ...path.dirs.slice(toIdx)],
   };
 }
 
 /**
- * Drop the course node nearest `atM` and close the gap with the best detour
- * around it — node-level editing's delete. Returns null when the node carries a
- * via, is an endpoint, or has no way round it.
+ * Node editing treats the course nodes as waypoints: an edit replaces the legs
+ * around one of them with the shortest route, leaving the rest of the course
+ * exactly as it was. Scores play no part — the user is in charge.
+ */
+export type NodeEditOptions = Pick<RerouteOptions, 'keepNodes' | 'keepEdges'>;
+
+/** Long enough to reach around the edited node, short enough to stay local. */
+const legBudget = (spanM: number) => Math.max(3000, spanM * 8);
+
+function cumulative(graph: Graph, path: CoursePath): number[] {
+  const cum: number[] = [0];
+  for (const ei of path.edges) cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
+  return cum;
+}
+
+type Legs = Pick<CoursePath, 'edges' | 'dirs'>;
+
+/** Shortest legs a → via → b as one path, or null if either end is out of reach. */
+function legsThrough(graph: Graph, a: number, via: number, b: number, budget: number): Legs | null {
+  const tree = dijkstra(graph, [via], { maxDist: budget });
+  const back = reconstructPath(graph, tree, via, a);
+  const out = reconstructPath(graph, tree, via, b);
+  if (!back || !out) return null;
+  const first = reversed(back);
+  return { edges: [...first.edges, ...out.edges], dirs: [...first.dirs, ...out.dirs] };
+}
+
+function splice(path: CoursePath, fromIdx: number, toIdx: number, legs: Legs): CoursePath {
+  return {
+    edges: [...path.edges.slice(0, fromIdx), ...legs.edges, ...path.edges.slice(toIdx)],
+    dirs: [...path.dirs.slice(0, fromIdx), ...legs.dirs, ...path.dirs.slice(toIdx)],
+  };
+}
+
+interface NodeSpot {
+  nodes: number[];
+  cum: number[];
+  /** Index of the interior course node nearest the distance asked for. */
+  at: number;
+}
+
+function locateNode(graph: Graph, path: CoursePath, atM: number): NodeSpot | null {
+  const nodes = pathNodes(graph, path, pathRoot(graph, path));
+  if (nodes.length < 4) return null;
+  const cum = cumulative(graph, path);
+  let at = 1;
+  for (let i = 1; i < nodes.length - 1; i++) {
+    if (Math.abs(cum[i]! - atM) < Math.abs(cum[at]! - atM)) at = i;
+  }
+  return { nodes, cum, at };
+}
+
+/** A via on the node, or on either leg into it, puts the node off limits. */
+function pinned(path: CoursePath, spot: NodeSpot, options: NodeEditOptions): boolean {
+  if (options.keepNodes?.has(spot.nodes[spot.at]!)) return true;
+  return (
+    options.keepEdges?.has(path.edges[spot.at - 1]!) === true ||
+    options.keepEdges?.has(path.edges[spot.at]!) === true
+  );
+}
+
+/**
+ * Drop the course node nearest `atM`, reconnecting its two neighbours by the
+ * shortest route. Returns null when the node carries a via or is an endpoint.
  */
 export function deleteNodeFromPath(
   graph: Graph,
   path: CoursePath,
   atM: number,
-  options: Pick<RerouteOptions, 'keepNodes' | 'keepEdges'> = {},
+  options: NodeEditOptions = {},
 ): CoursePath | null {
-  const nodes = pathNodes(graph, path, pathRoot(graph, path));
-  if (nodes.length < 4) return null;
-  const cum: number[] = [0];
-  for (const ei of path.edges) cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
-
-  let at = 1;
-  for (let i = 1; i < nodes.length - 1; i++) {
-    if (Math.abs(cum[i]! - atM) < Math.abs(cum[at]! - atM)) at = i;
-  }
-  const victim = nodes[at]!;
-  if (options.keepNodes?.has(victim)) return null;
-  if (options.keepEdges?.has(path.edges[at - 1]!) || options.keepEdges?.has(path.edges[at]!)) {
-    return null;
-  }
-
+  const spot = locateNode(graph, path, atM);
+  if (!spot || pinned(path, spot, options)) return null;
+  const { nodes, cum, at } = spot;
   const from = nodes[at - 1]!;
   const to = nodes[at + 1]!;
-  const removedM = cum[at + 1]! - cum[at - 1]!;
-  const detour = reconstructPath(
+  // The course went out to the node and straight back: both legs go with it.
+  if (from === to) {
+    if (path.edges.length <= 2) return null;
+    return splice(path, at - 1, at + 1, { edges: [], dirs: [] });
+  }
+  const direct = reconstructPath(
     graph,
-    dijkstra(graph, [from], {
-      target: to,
-      maxDist: Math.max(800, removedM * 6),
-      excludedNodes: new Set([victim]),
-    }),
+    dijkstra(graph, [from], { target: to, maxDist: legBudget(cum[at + 1]! - cum[at - 1]!) }),
     from,
     to,
   );
-  if (!detour) return null;
+  if (!direct || direct.edges.length === 0) return null;
+  return splice(path, at - 1, at + 1, direct);
+}
 
-  return {
-    edges: [...path.edges.slice(0, at - 1), ...detour.edges, ...path.edges.slice(at + 1)],
-    dirs: [...path.dirs.slice(0, at - 1), ...detour.dirs, ...path.dirs.slice(at + 1)],
-  };
+/**
+ * Move the course node nearest `atM` onto `targetNode`: its two neighbours
+ * reconnect to it by the shortest route and nothing else on the course moves.
+ */
+export function moveNodeInPath(
+  graph: Graph,
+  path: CoursePath,
+  atM: number,
+  targetNode: number,
+  options: NodeEditOptions = {},
+): CoursePath | null {
+  const spot = locateNode(graph, path, atM);
+  if (!spot || pinned(path, spot, options)) return null;
+  const { nodes, cum, at } = spot;
+  const legs = legsThrough(
+    graph,
+    nodes[at - 1]!,
+    targetNode,
+    nodes[at + 1]!,
+    legBudget(cum[at + 1]! - cum[at - 1]!),
+  );
+  if (!legs || legs.edges.length === 0) return null;
+  return splice(path, at - 1, at + 1, legs);
+}
+
+/**
+ * Add `targetNode` as a new course node on the leg covering `atM`, reached by
+ * the shortest route from each end of that leg.
+ */
+export function insertNodeIntoPath(
+  graph: Graph,
+  path: CoursePath,
+  atM: number,
+  targetNode: number,
+  options: NodeEditOptions = {},
+): CoursePath | null {
+  const nodes = pathNodes(graph, path, pathRoot(graph, path));
+  const cum = cumulative(graph, path);
+  const midOf = (i: number) => (cum[i]! + cum[i + 1]!) / 2;
+  let leg = 0;
+  for (let i = 1; i < path.edges.length; i++) {
+    if (Math.abs(midOf(i) - atM) < Math.abs(midOf(leg) - atM)) leg = i;
+  }
+  if (options.keepEdges?.has(path.edges[leg]!)) return null;
+  const a = nodes[leg]!;
+  const b = nodes[leg + 1]!;
+  if (targetNode === a || targetNode === b) return null;
+  const legs = legsThrough(graph, a, targetNode, b, legBudget(cum[leg + 1]! - cum[leg]!));
+  if (!legs || legs.edges.length === 0) return null;
+  return splice(path, leg, leg + 1, legs);
 }

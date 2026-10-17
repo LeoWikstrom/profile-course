@@ -13,7 +13,13 @@ import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { buildProfileFromSamples } from '../src/gpx/profile';
 import { beamSearch } from '../src/search/beam';
-import { deleteNodeFromPath, pathRoot, reroutePath } from '../src/search/edit';
+import {
+  deleteNodeFromPath,
+  insertNodeIntoPath,
+  moveNodeInPath,
+  pathRoot,
+  reroutePath,
+} from '../src/search/edit';
 import { assembleCourse } from '../src/search/score';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
@@ -105,33 +111,102 @@ describe('reroutePath', () => {
   });
 });
 
-describe('deleteNodeFromPath', () => {
-  it('removes a course node and closes the gap around it', async () => {
+describe('node editing', () => {
+  /** The interior course node nearest `atM`, with the path's node list. */
+  function spotAt(path: { edges: number[]; dirs: number[] }, atM: number) {
+    const nodes = pathNodes(graph, path, pathRoot(graph, path));
+    const cum = cumLengths(path);
+    let at = 1;
+    for (let i = 1; i < nodes.length - 1; i++) {
+      if (Math.abs(cum[i]! - atM) < Math.abs(cum[at]! - atM)) at = i;
+    }
+    return { nodes, cum, at };
+  }
+
+  it('deletes a node by reconnecting its neighbours the shortest way', async () => {
     const target = buildProfileFromSamples(new Float32Array(81), 2000);
     const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
     const course = results[0]!;
-    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
-    const cum = cumLengths(course.path);
-
-    let at = 1;
-    for (let i = 1; i < nodes.length - 1; i++) {
-      if (Math.abs(cum[i]! - 700) < Math.abs(cum[at]! - 700)) at = i;
-    }
-    const victim = nodes[at]!;
+    const { nodes, cum, at } = spotAt(course.path, 700);
 
     const trimmed = deleteNodeFromPath(graph, course.path, cum[at]!);
     expect(trimmed).not.toBeNull();
     const after = pathNodes(graph, trimmed!, pathRoot(graph, trimmed!));
-    const visits = (list: number[]) => list.filter((n) => n === victim).length;
-    // A loop course can pass the node twice; only the chosen visit goes.
-    expect(visits(after)).toBe(visits(nodes) - 1);
+    // The neighbours and both ends stay put; nothing else moves.
+    expect(after).toContain(nodes[at - 1]!);
+    expect(after).toContain(nodes[at + 1]!);
+    expect(after[0]).toBe(nodes[0]);
     expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
-    expect(assembleCourse(graph, trimmed!).lengthM).toBeGreaterThan(200);
+    // A shortest reconnection can never lengthen the course.
+    const before = assembleCourse(graph, course.path).lengthM;
+    expect(assembleCourse(graph, trimmed!).lengthM).toBeLessThanOrEqual(before + 1);
 
     // A via on that node outranks the delete.
     expect(
-      deleteNodeFromPath(graph, course.path, cum[at]!, { keepNodes: new Set([victim]) }),
+      deleteNodeFromPath(graph, course.path, cum[at]!, { keepNodes: new Set([nodes[at]!]) }),
     ).toBeNull();
+  });
+
+  it('moves a node onto a chosen node without moving the others', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const { nodes, cum, at } = spotAt(course.path, 700);
+    const onCourse = new Set(nodes);
+
+    const { dist } = dijkstra(graph, [nodes[at]!]);
+    let to = -1;
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (!onCourse.has(i) && dist[i]! > 50 && dist[i]! < 300) {
+        to = i;
+        break;
+      }
+    }
+    expect(to).toBeGreaterThanOrEqual(0);
+
+    const moved = moveNodeInPath(graph, course.path, cum[at]!, to);
+    expect(moved).not.toBeNull();
+    const after = pathNodes(graph, moved!, pathRoot(graph, moved!));
+    expect(after).toContain(to);
+    expect(after).toContain(nodes[at - 1]!);
+    expect(after).toContain(nodes[at + 1]!);
+    // Everything before and after the touched legs is untouched.
+    expect(after.slice(0, at - 1)).toEqual(nodes.slice(0, at - 1));
+    expect(after.slice(after.length - (nodes.length - at - 2))).toEqual(nodes.slice(at + 2));
+    expect(
+      moveNodeInPath(graph, course.path, cum[at]!, to, { keepNodes: new Set([nodes[at]!]) }),
+    ).toBeNull();
+  });
+
+  it('adds a node on the leg nearest the chosen distance', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
+    const onCourse = new Set(nodes);
+    const cum = cumLengths(course.path);
+
+    const { dist } = dijkstra(graph, [startNode]);
+    let to = -1;
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (!onCourse.has(i) && dist[i]! > 100 && dist[i]! < 400) {
+        to = i;
+        break;
+      }
+    }
+    expect(to).toBeGreaterThanOrEqual(0);
+
+    const grown = insertNodeIntoPath(graph, course.path, 600, to);
+    expect(grown).not.toBeNull();
+    const after = pathNodes(graph, grown!, pathRoot(graph, grown!));
+    expect(after).toContain(to);
+    expect(after[0]).toBe(nodes[0]);
+    expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
+    expect(assembleCourse(graph, grown!).lengthM).toBeGreaterThan(
+      assembleCourse(graph, course.path).lengthM - 1,
+    );
+    // The course's own nodes cannot be added again.
+    expect(insertNodeIntoPath(graph, course.path, cum[1]!, nodes[1]!)).toBeNull();
   });
 });
 

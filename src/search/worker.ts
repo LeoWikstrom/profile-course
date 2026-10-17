@@ -23,7 +23,13 @@ import type {
 } from '../shared/messages';
 import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
-import { DEFAULT_WINDOW_M, deleteNodeFromPath, reroutePath } from './edit';
+import {
+  DEFAULT_WINDOW_M,
+  deleteNodeFromPath,
+  insertNodeIntoPath,
+  moveNodeInPath,
+  reroutePath,
+} from './edit';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
@@ -545,8 +551,10 @@ async function editCourse(
   postEdited(g, newPath, target, desiredMix, weightsIn);
 }
 
-async function deleteCoursePoint(
+async function nodeEdit(
+  op: 'move' | 'delete' | 'add',
   atKm: number,
+  to: LatLon | null,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
@@ -558,12 +566,31 @@ async function deleteCoursePoint(
   const currentPath = await ensureCurrentPath(lats, lons, resync);
   const g = graph!;
   const keep = viaKeepSets(g, viaPoints);
-  const newPath = deleteNodeFromPath(g, currentPath, atKm * 1000, {
-    keepNodes: keep.nodes,
-    keepEdges: keep.edges,
-  });
+  const atM = atKm * 1000;
+  const options = { keepNodes: keep.nodes, keepEdges: keep.edges };
+
+  if (op === 'delete') {
+    const newPath = deleteNodeFromPath(g, currentPath, atM, options);
+    if (!newPath) {
+      throw new Error('That point cannot be removed: it is a via point or an end of the course');
+    }
+    postEdited(g, newPath, target, desiredMix, weightsIn);
+    return;
+  }
+
+  if (!to) throw new Error('No destination for that node edit');
+  const node = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
+  if (node < 0) throw new Error(`No path within ${EDIT_SNAP_M} m of the tapped point`);
+  const newPath =
+    op === 'move'
+      ? moveNodeInPath(g, currentPath, atM, node, options)
+      : insertNodeIntoPath(g, currentPath, atM, node, options);
   if (!newPath) {
-    throw new Error('That point cannot be removed: it is a via, an end, or has no way round it');
+    throw new Error(
+      op === 'move'
+        ? 'Could not connect the neighbouring points to there (or that point is a via point)'
+        : 'Could not add a course point there',
+    );
   }
   postEdited(g, newPath, target, desiredMix, weightsIn);
 }
@@ -694,9 +721,11 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
-    case 'deleteCoursePoint':
-      deleteCoursePoint(
+    case 'nodeEdit':
+      nodeEdit(
+        msg.op,
         msg.atKm,
+        msg.to,
         msg.lats,
         msg.lons,
         msg.target,

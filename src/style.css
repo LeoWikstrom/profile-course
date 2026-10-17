@@ -184,6 +184,28 @@ button:not(:disabled) {
   gap: 8px;
 }
 
+/* `display: flex` would otherwise beat the hidden attribute's display: none. */
+#edit-bar[hidden],
+#edit-status[hidden] {
+  display: none;
+}
+
+#edit-status {
+  position: fixed;
+  top: 54px;
+  left: 8px;
+  z-index: 1100;
+  max-width: min(calc(100% - 16px), 360px);
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+  animation: fade-in 0.2s ease-out;
+}
+
 #edit-bar > button {
   width: auto;
   min-height: 40px;

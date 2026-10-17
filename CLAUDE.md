@@ -99,9 +99,12 @@ Score (lower = better) on 25 m samples:
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).
       **Node submode**
-      ("Nodes" in the edit bar): every junction of the course is drawn as a dot and taps/pulls
-      snap to those dots; the window shrinks to ±50 m, so a pull moves a single course point and
-      a tap deletes it, closing the gap with a detour around it.
+      ("Nodes" in the edit bar) treats course nodes as waypoints, ignoring the score entirely:
+      every junction is drawn as a dot, a pull moves that node (neighbours reconnect by shortest
+      path), a tap on a dot deletes it (neighbours reconnect; an out-and-back spur drops both
+      legs), and a tap away from the dots adds a node on the nearest leg. Nothing outside the
+      two touched legs ever moves. Editing feedback also shows in a pill over the map, because
+      the sheet may be collapsed.
 - [ ] **Multiple candidates** (next): keep the top N courses from one search and switch between
       them with tabs at the top of the panel, plus a desktop keyboard shortcut.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava

@@ -109,9 +109,16 @@ export type MainToWorker =
       rerouteWindowM?: number;
     }
   | {
-      /** Node-level editing: drop the course node nearest `atKm`. */
-      type: 'deleteCoursePoint';
+      /**
+       * Node-level editing on the course node nearest `atKm`: move it to `to`,
+       * delete it, or add `to` as a new node on that leg. Each only rewrites the
+       * legs around that node, by shortest route, ignoring the score.
+       */
+      type: 'nodeEdit';
+      op: 'move' | 'delete' | 'add';
       atKm: number;
+      /** Where the node should sit; null for a delete. */
+      to: LatLon | null;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;
