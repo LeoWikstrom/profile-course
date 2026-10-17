@@ -44,8 +44,12 @@ export interface MapController {
    */
   armCourseDrag(
     points: LatLon[],
-    onPull: (index: number, to: LatLon, dragged: boolean) => void,
-    onGrab?: (index: number) => void,
+    handlers: {
+      onPull: (index: number, to: LatLon, dragged: boolean) => void;
+      onGrab?: (index: number) => void;
+      /** The fixed points the pulled stretch stays attached to, for the drag preview. */
+      anchors?: (index: number) => readonly [LatLon, LatLon] | null;
+    },
   ): void;
   disarmCourseDrag(): void;
   /** Translucent box over the stretch an edit may rewrite. */
@@ -120,11 +124,14 @@ export function createMap(container: string): MapController {
 
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
   let grabCb: ((index: number) => void) | null = null;
+  let anchorsCb: ((index: number) => readonly [LatLon, LatLon] | null) | null = null;
   let windowBox: L.Rectangle | null = null;
   let pullPoints: LatLon[] = [];
   let pullIndex = -1;
   let pullStart: { x: number; y: number } | null = null;
+  let pullAnchors: readonly [LatLon, LatLon] | null = null;
   let rubber: L.Polyline | null = null;
+  let rubberPoint: L.Marker | null = null;
 
   function nearestCoursePoint(e: PointerEvent): number {
     const p = map.mouseEventToContainerPoint(e);
@@ -149,6 +156,7 @@ export function createMap(container: string): MapController {
     if (i < 0) return; // away from the course: let the map pan as usual
     pullIndex = i;
     pullStart = { x: e.clientX, y: e.clientY };
+    pullAnchors = anchorsCb?.(i) ?? null;
     map.dragging.disable();
     mapEl.setPointerCapture(e.pointerId);
     grabCb?.(i);
@@ -158,14 +166,27 @@ export function createMap(container: string): MapController {
     if (!pullStart) return;
     const from = pullPoints[pullIndex]!;
     const to = map.mouseEventToLatLng(e);
-    const line: L.LatLngExpression[] = [[from.lat, from.lon], to];
+    // Straight legs from the two points the stretch stays attached to, so it is
+    // obvious which part of the course the drag can still move.
+    const ends = pullAnchors ?? ([from, from] as const);
+    const line: L.LatLngExpression[] = [[ends[0].lat, ends[0].lon], to, [ends[1].lat, ends[1].lon]];
     if (rubber) rubber.setLatLngs(line);
     else {
       rubber = L.polyline(line, {
         pane: EDIT_PANE,
-        color: '#dc2626',
-        weight: 3,
-        dashArray: '6 4',
+        color: '#7c3aed',
+        weight: 4,
+        opacity: 0.55,
+        dashArray: '6 5',
+        interactive: false,
+      }).addTo(map);
+    }
+    if (rubberPoint) rubberPoint.setLatLng(to);
+    else {
+      rubberPoint = L.marker(to, {
+        pane: EDIT_PANE,
+        interactive: false,
+        icon: L.divIcon({ className: 'dragged-point', iconSize: [14, 14] }),
       }).addTo(map);
     }
   });
@@ -176,8 +197,11 @@ export function createMap(container: string): MapController {
     const index = pullIndex;
     pullStart = null;
     pullIndex = -1;
+    pullAnchors = null;
     rubber?.remove();
     rubber = null;
+    rubberPoint?.remove();
+    rubberPoint = null;
     map.dragging.enable();
     if (!commit) return;
     lastDragEnd = Date.now();
@@ -232,14 +256,16 @@ export function createMap(container: string): MapController {
       }
       nodeLayer.addTo(map);
     },
-    armCourseDrag(points, onPull, onGrab) {
+    armCourseDrag(points, handlers) {
       pullPoints = points;
-      pullCb = onPull;
-      grabCb = onGrab ?? null;
+      pullCb = handlers.onPull;
+      grabCb = handlers.onGrab ?? null;
+      anchorsCb = handlers.anchors ?? null;
     },
     disarmCourseDrag() {
       pullCb = null;
       grabCb = null;
+      anchorsCb = null;
       pullPoints = [];
     },
     showEditWindow(points) {

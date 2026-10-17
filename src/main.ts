@@ -334,16 +334,26 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     map.armViaPlacement((to) => sendEdit(result, atKm, to));
   };
 
-  map.armCourseDrag(
-    grabPoints,
-    (index, to, dragged) => {
+  map.armCourseDrag(grabPoints, {
+    onPull: (index, to, dragged) => {
       const atKm = kmAt(index);
       if (dragged) sendEdit(result, atKm, to);
       else if (nodeMode) sendDeletePoint(result, atKm, grabPoints[index]!);
       else selectDestination(index);
     },
-    (index) => previewEditWindow(points, kmAt(index)),
-  );
+    onGrab: (index) => previewEditWindow(points, kmAt(index)),
+    anchors: (index) => {
+      // The course either side of these two points is untouched by the edit:
+      // the neighbouring junctions in node mode, the window ends otherwise.
+      if (nodes) {
+        return [nodes[index - 1] ?? nodes[index]!, nodes[index + 1] ?? nodes[index]!] as const;
+      }
+      const stretch = editWindowPoints(points, kmAt(index));
+      const first = stretch[0];
+      const last = stretch[stretch.length - 1];
+      return first && last ? ([first, last] as const) : null;
+    },
+  });
   map.armViaPlacement((p) => {
     if (nodeMode) {
       // Deleting is destructive, so only a tap on a node itself counts.
