@@ -179,6 +179,45 @@ function courseNodes(course: CourseResult): { lat: number; lon: number; km: numb
   return out;
 }
 
+/**
+ * Distance along the course at each point. Course points are not spaced at
+ * exactly 25 m — each edge spreads its own samples — so index × 25 m drifts.
+ */
+function cumulativeM(points: { lat: number; lon: number }[]): number[] {
+  const cum = [0];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    cum.push(cum[i - 1]! + haversineMeters(a.lat, a.lon, b.lat, b.lon));
+  }
+  return cum;
+}
+
+/** Midpoint km of the course leg whose geometry passes nearest `p`. */
+function nearestLegKm(course: CourseResult, p: { lat: number; lon: number }): number {
+  const lonScale = Math.cos((p.lat * Math.PI) / 180);
+  let runM = 0;
+  let bestD = Infinity;
+  let bestKm = 0;
+  for (const seg of course.segments) {
+    const startM = runM;
+    let segD = Infinity;
+    for (let i = 0; i < seg.lats.length; i++) {
+      const dLat = seg.lats[i]! - p.lat;
+      const dLon = (seg.lons[i]! - p.lon) * lonScale;
+      segD = Math.min(segD, dLat * dLat + dLon * dLon);
+      if (i > 0) {
+        runM += haversineMeters(seg.lats[i - 1]!, seg.lons[i - 1]!, seg.lats[i]!, seg.lons[i]!);
+      }
+    }
+    if (segD < bestD) {
+      bestD = segD;
+      bestKm = (startM + runM) / 2000;
+    }
+  }
+  return bestKm;
+}
+
 function rerouteWindowM(): number {
   return Math.max(100, Number(rerouteWindow.value) || 600);
 }
@@ -186,16 +225,25 @@ function rerouteWindowM(): number {
 /** The stretch an edit at `atKm` may rewrite, as course points. */
 function editWindowPoints(
   points: { lat: number; lon: number }[],
+  cum: number[],
   atKm: number,
 ): { lat: number; lon: number }[] {
-  const index = Math.round((atKm * 1000) / SAMPLE_STEP_M);
-  const span = Math.round(rerouteWindowM() / SAMPLE_STEP_M);
-  return points.slice(Math.max(0, index - span), Math.min(points.length, index + span + 1));
+  const at = atKm * 1000;
+  const half = rerouteWindowM();
+  let from = 0;
+  let to = points.length - 1;
+  while (from < to && cum[from]! < at - half) from++;
+  while (to > from && cum[to]! > at + half) to--;
+  return points.slice(from, to + 1);
 }
 
-function previewEditWindow(points: { lat: number; lon: number }[], atKm: number): void {
+function previewEditWindow(
+  points: { lat: number; lon: number }[],
+  cum: number[],
+  atKm: number,
+): void {
   // A node edit reaches to its neighbours, which the drag preview already draws.
-  if (showEditWindow.checked && !nodeMode) map.showEditWindow(editWindowPoints(points, atKm));
+  if (showEditWindow.checked && !nodeMode) map.showEditWindow(editWindowPoints(points, cum, atKm));
 }
 
 /**
@@ -209,8 +257,13 @@ let nodeMode = false;
 let lastAction: { label: string; onAction: () => void } | undefined;
 /** Courses replaced by an edit, newest last, for Undo. */
 const editHistory: { course: CourseResult; profile: TargetProfile }[] = [];
-/** Where edits have landed, drawn on the map while editing. */
-let editedPoints: { lat: number; lon: number }[] = [];
+/** Where edits have landed, drawn on the map while editing; null for node edits. */
+let editedPoints: ({ lat: number; lon: number } | null)[] = [];
+
+/** Node edits need no marker: the node dots already show where they landed. */
+function drawEditMarkers(): void {
+  map.setEditMarkers(editedPoints.filter((p): p is { lat: number; lon: number } => p !== null));
+}
 
 function toggleEditing(result: { course: CourseResult; profile: TargetProfile }): void {
   if (editingMode) {
@@ -251,12 +304,12 @@ editNodesButton.addEventListener('click', () => {
 /** Record the course an edit is about to replace, so Undo can bring it back. */
 function beginEdit(
   result: { course: CourseResult; profile: TargetProfile },
-  marker: { lat: number; lon: number },
+  marker: { lat: number; lon: number } | null,
 ): void {
   editHistory.push(result);
   editedPoints.push(marker);
   pendingEdit = true;
-  map.setEditMarkers(editedPoints);
+  drawEditMarkers();
   map.hideCoursePoint();
   map.hideEditWindow();
 }
@@ -290,9 +343,8 @@ function sendNodeEdit(
   op: 'move' | 'delete' | 'add',
   atKm: number,
   to: { lat: number; lon: number } | null,
-  marker: { lat: number; lon: number },
 ): void {
-  beginEdit(result, marker);
+  beginEdit(result, null);
   const what =
     op === 'move'
       ? `Moving the point at km ${atKm.toFixed(1)}…`
@@ -315,7 +367,7 @@ function undoEdit(): void {
   if (!previous) return;
   workerCourseStale = true; // the worker's cached path is the edit we just dropped
   editedPoints.pop();
-  map.setEditMarkers(editedPoints);
+  drawEditMarkers();
   lastResult = previous;
   showResult(previous, lastAction);
   startHint.textContent = `Edit undone — mismatch back to ${previous.course.score.toFixed(1)}.`;
@@ -330,20 +382,21 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   // are both drawn and used as the grabbable points.
   const nodes = nodeMode ? courseNodes(result.course) : null;
   const grabPoints = nodes ?? points;
-  const kmAt = (index: number) => nodes?.[index]?.km ?? (index * SAMPLE_STEP_M) / 1000;
+  const cum = cumulativeM(points);
+  const kmAt = (index: number) => nodes?.[index]?.km ?? cum[index]! / 1000;
   setEditStatus(
     nodeMode
       ? 'Nodes: pull a dot to move it, tap a dot to delete it, tap elsewhere to add one.'
       : 'Editing: pull the course where you want it, or tap a point on it.',
   );
-  map.setEditMarkers(editedPoints);
+  drawEditMarkers();
   map.setNodeMarkers(nodes ?? []);
   map.hideEditWindow();
 
   const selectDestination = (index: number) => {
     const atKm = kmAt(index);
     map.showCoursePoint(grabPoints[index]!);
-    previewEditWindow(points, atKm);
+    previewEditWindow(points, cum, atKm);
     // While waiting for the destination, a tap near the course must not be
     // swallowed as a new pull.
     map.disarmCourseDrag();
@@ -355,25 +408,33 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     onPull: (index, to, dragged) => {
       const atKm = kmAt(index);
       if (nodeMode) {
-        if (dragged) sendNodeEdit(result, 'move', atKm, to, to);
-        else sendNodeEdit(result, 'delete', atKm, null, grabPoints[index]!);
+        if (dragged) sendNodeEdit(result, 'move', atKm, to);
+        else sendNodeEdit(result, 'delete', atKm, null);
       } else if (dragged) sendEdit(result, atKm, to);
       else selectDestination(index);
     },
-    onGrab: (index) => previewEditWindow(points, kmAt(index)),
+    onGrab: (index) => previewEditWindow(points, cum, kmAt(index)),
     anchors: (index) => {
       // The course either side of these two points is untouched by the edit:
       // the neighbouring junctions in node mode, the window ends otherwise.
       if (nodes) {
         return [nodes[index - 1] ?? nodes[index]!, nodes[index + 1] ?? nodes[index]!] as const;
       }
-      const stretch = editWindowPoints(points, kmAt(index));
+      const stretch = editWindowPoints(points, cum, kmAt(index));
       const first = stretch[0];
       const last = stretch[stretch.length - 1];
       return first && last ? ([first, last] as const) : null;
     },
   });
-  map.armViaPlacement((p) => {
+  const onTap = (p: { lat: number; lon: number }): void => {
+    // Away from any dot, a tap in node mode adds a point on the nearest leg.
+    if (nodeMode) {
+      sendNodeEdit(result, 'add', nearestLegKm(result.course, p), p);
+      // Taps keep adding while the reroute is in flight, instead of falling
+      // through to placing a new start.
+      map.armViaPlacement(onTap);
+      return;
+    }
     // A tap away from the course still picks the nearest course point.
     let bestI = 0;
     let bestD = Infinity;
@@ -386,10 +447,9 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
         bestI = i;
       }
     }
-    // Away from any dot, a tap in node mode adds a point on the nearest leg.
-    if (nodeMode) sendNodeEdit(result, 'add', (bestI * SAMPLE_STEP_M) / 1000, p, p);
-    else selectDestination(bestI);
-  });
+    selectDestination(bestI);
+  };
+  map.armViaPlacement(onTap);
 }
 
 /** The profile actually searched for: the race window, rebased. */
@@ -601,7 +661,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
         pendingEdit = false;
         editHistory.pop();
         editedPoints.pop();
-        map.setEditMarkers(editedPoints);
+        drawEditMarkers();
         refreshEditBar();
         if (editingMode && lastResult) armEditing(lastResult);
       }

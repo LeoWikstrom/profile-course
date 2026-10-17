@@ -100,10 +100,13 @@ Score (lower = better) on 25 m samples:
       result on release. A translucent box can also outline the window (off by default).
       **Node submode**
       ("Nodes" in the edit bar) treats course nodes as waypoints, ignoring the score entirely:
-      every junction is drawn as a dot, a pull moves that node (neighbours reconnect by shortest
-      path), a tap on a dot deletes it (neighbours reconnect; an out-and-back spur drops both
-      legs), and a tap away from the dots adds a node on the nearest leg. Nothing outside the
-      two touched legs ever moves. Editing feedback also shows in a pill over the map, because
+      every junction is drawn as a dot, a pull moves that node, a tap on a dot deletes it, and a
+      tap away from the dots adds a node on the leg whose geometry passes nearest the tap.
+      Reconnection is by shortest path *excluding the old node*, so the course visibly stops
+      going there (falling back to routing through it only when that is the sole connection); an
+      out-and-back spur drops both legs. Nothing outside the two touched legs ever moves, and the
+      start/finish cannot be moved or deleted this way. Distances along the course are cumulative
+      haversine, never index × 25 m: each edge spreads its own samples, so the step is 25–50 m. Editing feedback also shows in a pill over the map, because
       the sheet may be collapsed.
 - [ ] **Multiple candidates** (next): keep the top N courses from one search and switch between
       them with tabs at the top of the panel, plus a desktop keyboard shortcut.

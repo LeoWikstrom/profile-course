@@ -28,8 +28,10 @@ import {
   deleteNodeFromPath,
   insertNodeIntoPath,
   moveNodeInPath,
+  pathRoot,
   reroutePath,
 } from './edit';
+import { pathNodes } from '../graph/ksp';
 import { beamSearch } from './beam';
 import { improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
@@ -572,7 +574,9 @@ async function nodeEdit(
   if (op === 'delete') {
     const newPath = deleteNodeFromPath(g, currentPath, atM, options);
     if (!newPath) {
-      throw new Error('That point cannot be removed: it is a via point or an end of the course');
+      throw new Error(
+        'That point stays: it is a via point, an end of the course, or the only way through',
+      );
     }
     postEdited(g, newPath, target, desiredMix, weightsIn);
     return;
@@ -580,7 +584,10 @@ async function nodeEdit(
 
   if (!to) throw new Error('No destination for that node edit');
   const node = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
-  if (node < 0) throw new Error(`No path within ${EDIT_SNAP_M} m of the tapped point`);
+  if (node < 0) throw new Error(`No path within ${EDIT_SNAP_M} m of that point`);
+  if (op === 'add' && pathNodes(g, currentPath, pathRoot(g, currentPath)).includes(node)) {
+    throw new Error('The course already has a point there');
+  }
   const newPath =
     op === 'move'
       ? moveNodeInPath(g, currentPath, atM, node, options)
@@ -588,7 +595,7 @@ async function nodeEdit(
   if (!newPath) {
     throw new Error(
       op === 'move'
-        ? 'Could not connect the neighbouring points to there (or that point is a via point)'
+        ? 'Could not connect the neighbouring points to there (or it is a via point)'
         : 'Could not add a course point there',
     );
   }

@@ -137,9 +137,10 @@ describe('node editing', () => {
     expect(after).toContain(nodes[at + 1]!);
     expect(after[0]).toBe(nodes[0]);
     expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
-    // A shortest reconnection can never lengthen the course.
-    const before = assembleCourse(graph, course.path).lengthM;
-    expect(assembleCourse(graph, trimmed!).lengthM).toBeLessThanOrEqual(before + 1);
+    // The course visibly stops going there: the reconnection avoids the node,
+    // so it can only still appear where the course passes it elsewhere.
+    const count = (list: number[], node: number) => list.filter((n) => n === node).length;
+    expect(count(after, nodes[at]!)).toBeLessThan(count(nodes, nodes[at]!));
 
     // A via on that node outranks the delete.
     expect(
@@ -170,6 +171,9 @@ describe('node editing', () => {
     expect(after).toContain(to);
     expect(after).toContain(nodes[at - 1]!);
     expect(after).toContain(nodes[at + 1]!);
+    // The node really moved: the new legs go round where it used to be.
+    const count = (list: number[], node: number) => list.filter((n) => n === node).length;
+    expect(count(after, nodes[at]!)).toBeLessThan(count(nodes, nodes[at]!));
     // Everything before and after the touched legs is untouched.
     expect(after.slice(0, at - 1)).toEqual(nodes.slice(0, at - 1));
     expect(after.slice(after.length - (nodes.length - at - 2))).toEqual(nodes.slice(at + 2));
@@ -207,6 +211,18 @@ describe('node editing', () => {
     );
     // The course's own nodes cannot be added again.
     expect(insertNodeIntoPath(graph, course.path, cum[1]!, nodes[1]!)).toBeNull();
+
+    // The new node lands on the leg the distance falls on, nothing else moves.
+    const leg = 3;
+    const mid = (cum[leg]! + cum[leg + 1]!) / 2;
+    const onLeg = insertNodeIntoPath(graph, course.path, mid, to);
+    expect(onLeg).not.toBeNull();
+    const legNodes = pathNodes(graph, onLeg!, pathRoot(graph, onLeg!));
+    expect(legNodes.slice(0, leg + 1)).toEqual(nodes.slice(0, leg + 1));
+    expect(legNodes.slice(legNodes.length - (nodes.length - leg - 1))).toEqual(
+      nodes.slice(leg + 1),
+    );
+    expect(legNodes).toContain(to);
   });
 });
 

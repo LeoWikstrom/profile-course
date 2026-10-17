@@ -137,8 +137,18 @@ function cumulative(graph: Graph, path: CoursePath): number[] {
 type Legs = Pick<CoursePath, 'edges' | 'dirs'>;
 
 /** Shortest legs a → via → b as one path, or null if either end is out of reach. */
-function legsThrough(graph: Graph, a: number, via: number, b: number, budget: number): Legs | null {
-  const tree = dijkstra(graph, [via], { maxDist: budget });
+function legsThrough(
+  graph: Graph,
+  a: number,
+  via: number,
+  b: number,
+  budget: number,
+  avoid?: number,
+): Legs | null {
+  const tree = dijkstra(graph, [via], {
+    maxDist: budget,
+    ...(avoid === undefined ? {} : { excludedNodes: new Set([avoid]) }),
+  });
   const back = reconstructPath(graph, tree, via, a);
   const out = reconstructPath(graph, tree, via, b);
   if (!back || !out) return null;
@@ -164,10 +174,12 @@ function locateNode(graph: Graph, path: CoursePath, atM: number): NodeSpot | nul
   const nodes = pathNodes(graph, path, pathRoot(graph, path));
   if (nodes.length < 4) return null;
   const cum = cumulative(graph, path);
-  let at = 1;
-  for (let i = 1; i < nodes.length - 1; i++) {
+  let at = 0;
+  for (let i = 1; i < nodes.length; i++) {
     if (Math.abs(cum[i]! - atM) < Math.abs(cum[at]! - atM)) at = i;
   }
+  // The start and finish are set elsewhere; an edit there is not a node edit.
+  if (at === 0 || at === nodes.length - 1) return null;
   return { nodes, cum, at };
 }
 
@@ -181,8 +193,10 @@ function pinned(path: CoursePath, spot: NodeSpot, options: NodeEditOptions): boo
 }
 
 /**
- * Drop the course node nearest `atM`, reconnecting its two neighbours by the
- * shortest route. Returns null when the node carries a via or is an endpoint.
+ * Drop the course node nearest `atM`: its neighbours reconnect by the shortest
+ * route that no longer passes through it, so the course visibly stops going
+ * there. Returns null when the node carries a via, is an endpoint, or has no
+ * way round it at all.
  */
 export function deleteNodeFromPath(
   graph: Graph,
@@ -202,7 +216,11 @@ export function deleteNodeFromPath(
   }
   const direct = reconstructPath(
     graph,
-    dijkstra(graph, [from], { target: to, maxDist: legBudget(cum[at + 1]! - cum[at - 1]!) }),
+    dijkstra(graph, [from], {
+      target: to,
+      maxDist: legBudget(cum[at + 1]! - cum[at - 1]!),
+      excludedNodes: new Set([nodes[at]!]),
+    }),
     from,
     to,
   );
@@ -213,6 +231,7 @@ export function deleteNodeFromPath(
 /**
  * Move the course node nearest `atM` onto `targetNode`: its two neighbours
  * reconnect to it by the shortest route and nothing else on the course moves.
+ * The route avoids the node's old position where the network allows it.
  */
 export function moveNodeInPath(
   graph: Graph,
@@ -224,13 +243,13 @@ export function moveNodeInPath(
   const spot = locateNode(graph, path, atM);
   if (!spot || pinned(path, spot, options)) return null;
   const { nodes, cum, at } = spot;
-  const legs = legsThrough(
-    graph,
-    nodes[at - 1]!,
-    targetNode,
-    nodes[at + 1]!,
-    legBudget(cum[at + 1]! - cum[at - 1]!),
-  );
+  const budget = legBudget(cum[at + 1]! - cum[at - 1]!);
+  const from = nodes[at - 1]!;
+  const to = nodes[at + 1]!;
+  const legs =
+    legsThrough(graph, from, targetNode, to, budget, nodes[at]!) ??
+    // Only reachable through where the node was, so the course keeps going there.
+    legsThrough(graph, from, targetNode, to, budget);
   if (!legs || legs.edges.length === 0) return null;
   return splice(path, at - 1, at + 1, legs);
 }
@@ -248,10 +267,13 @@ export function insertNodeIntoPath(
 ): CoursePath | null {
   const nodes = pathNodes(graph, path, pathRoot(graph, path));
   const cum = cumulative(graph, path);
-  const midOf = (i: number) => (cum[i]! + cum[i + 1]!) / 2;
-  let leg = 0;
-  for (let i = 1; i < path.edges.length; i++) {
-    if (Math.abs(midOf(i) - atM) < Math.abs(midOf(leg) - atM)) leg = i;
+  // The leg the distance falls on, so the node lands where it was asked for.
+  let leg = path.edges.length - 1;
+  for (let i = 0; i < path.edges.length; i++) {
+    if (atM <= cum[i + 1]!) {
+      leg = i;
+      break;
+    }
   }
   if (options.keepEdges?.has(path.edges[leg]!)) return null;
   const a = nodes[leg]!;
