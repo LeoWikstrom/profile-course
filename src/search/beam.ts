@@ -20,6 +20,7 @@ import { mulberry32, type WalkCandidate } from './randomWalk';
 export interface BeamOptions {
   /** Perturbs beam tie-breaking so "Try another" explores different courses. */
   seed?: number;
+  /** States kept per bucket; a floor, since multi-start widens it (STATES_PER_ROOT). */
   beamWidth?: number;
   bucketSizeM?: number;
   lengthTolerance?: number;
@@ -102,6 +103,14 @@ interface TargetPrefix {
 }
 
 const MAX_ROOTS = 120;
+
+/**
+ * States each start node keeps when the course may begin anywhere. One beam
+ * shared across every root left a lineage with barely a state to its name, so
+ * each start settled for whatever faked the profile in its own corner instead
+ * of searching; the beam now widens with the number of roots.
+ */
+const STATES_PER_ROOT = 16;
 
 /**
  * Per metre of an avoided edge, in the same units as an edge's own penalty —
@@ -310,6 +319,10 @@ export async function beamSearch(
       roots = picked;
     }
   }
+  // Capped at ten times the effort asked for, so a wide zone cannot run away
+  // with it — start-anywhere is already documented as the slow option.
+  const width = Math.max(beamWidth, Math.min(STATES_PER_ROOT * roots.length, 10 * beamWidth));
+
   const s: StateStore = {
     node: [...roots],
     dist: roots.map(() => 0),
@@ -384,7 +397,7 @@ export async function beamSearch(
     // nodes, so the cap scales up to keep distinct histories alive.
     const perNodeCap = Math.max(
       2,
-      Math.min(8, Math.floor((2 * beamWidth) / Math.max(1, graph.nodeLat.length))),
+      Math.min(8, Math.floor((2 * width) / Math.max(1, graph.nodeLat.length))),
     );
     // First pass: best state per ~400 m map cell, so the frontier stays
     // spatially spread — otherwise the whole beam collapses onto one
@@ -399,7 +412,7 @@ export async function beamSearch(
     const cells = new Set<number>();
     // Half the beam for spatial spread: measured best (a quarter lost ground
     // on the 21 km benchmark, 46.9 vs 45.5 average over three seeds).
-    const diversityQuota = Math.floor(beamWidth / 2);
+    const diversityQuota = Math.floor(width / 2);
     for (const si of bucket) {
       if (chosen.size >= diversityQuota) break;
       const c = cellOf(si);
@@ -412,7 +425,7 @@ export async function beamSearch(
     for (const si of bucket) if (chosen.has(si)) kept.push(si);
     const perNode = new Map<number, number>();
     for (const si of bucket) {
-      if (kept.length >= beamWidth) break;
+      if (kept.length >= width) break;
       if (chosen.has(si)) continue;
       // Via progress is part of a state's identity: a lineage that already
       // passed via 1 must not be deduped against one that has not.
@@ -427,7 +440,7 @@ export async function beamSearch(
 
     // Same-bucket states (short edges) are appended to this queue and processed
     // now; distance strictly increases, and the cap bounds worst-case blowup.
-    const maxProcessed = beamWidth * 10;
+    const maxProcessed = width * 10;
     for (let qi = 0; qi < bucket.length && qi < maxProcessed; qi++) {
       const si = bucket[qi]!;
       const node = s.node[si]!;

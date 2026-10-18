@@ -69,6 +69,10 @@ than faking it.
 - Phase 2 baseline: 2 000 seeded random walks, keep best 20, local improvement.
 - Phase 3: beam search over `(node, 100 m bucket)` states, B = 200/bucket, Dijkstra pruning on
   reachability, k-shortest-paths window replacement (300–1 500 m, k = 5, two passes).
+  B is a floor: start-anywhere subsamples the zone to at most 120 roots and widens the beam to
+  16 states per root (capped at 10 × the asked-for effort), because one shared beam left each
+  lineage barely a state and every start simply faked the profile in its own corner. That is
+  why start-anywhere is the slow option, and it is labelled as such in the UI.
 - Deterministic via user-visible seed; "Try another" increments it.
 - Budget: graph build ≤ 2 s, search ≤ 8 s on a mid-range phone (R = 5 km, 21 km target).
   If over: halve B, double bucket size.
