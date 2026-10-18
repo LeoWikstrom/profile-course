@@ -28,6 +28,14 @@ export interface ImproveOptions {
 /** Above this share of shared edges, two courses are the same run out. */
 const SAME_COURSE_OVERLAP = 0.6;
 
+/**
+ * Overlap bars tried in turn when choosing which courses to offer. A wholly
+ * different route is the nicest alternative, but one beam rarely holds one —
+ * the long a course is, the more any two ways round it share — so rather than
+ * offer nothing we fall back to courses that differ over part of their length.
+ */
+const OVERLAP_BARS = [SAME_COURSE_OVERLAP, 0.8, 0.92];
+
 function edgeOverlap(a: Set<number>, b: Set<number>): number {
   let shared = 0;
   for (const edge of a) if (b.has(edge)) shared++;
@@ -52,6 +60,16 @@ export function distinctCandidates(
     }
   }
   return chosen.map((c) => c.candidate);
+}
+
+/** The courses to offer, as different from each other as this search allows. */
+export function pickDistinct(candidates: WalkCandidate[], limit: number): WalkCandidate[] {
+  let chosen = candidates.slice(0, 1);
+  for (const bar of OVERLAP_BARS) {
+    chosen = distinctCandidates(candidates, limit, bar);
+    if (chosen.length >= limit) break;
+  }
+  return chosen;
 }
 
 function spliceWindow(

@@ -33,7 +33,7 @@ import {
 } from './edit';
 import { pathNodes } from '../graph/ksp';
 import { beamSearch } from './beam';
-import { distinctCandidates, improveCandidates } from './improve';
+import { improveCandidates, pickDistinct } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
 import {
   assembleCourse,
@@ -423,14 +423,10 @@ async function search(
 
   const tSearch = performance.now();
   post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
-  // Pick the courses to offer before improving, so the whole improvement
-  // budget goes to courses the user can actually choose.
-  const shortlist = distinctCandidates(candidates, MAX_COURSES);
-  const improved = await improveCandidates(g, startNode, shortlist, profile, targetLengthMeters, {
+  const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
     desiredMix: opts.desiredMix,
     weights,
     validatePath,
-    maxCandidates: MAX_COURSES,
     shouldCancel: () => cancelled,
   });
   if (cancelled) return;
@@ -447,7 +443,7 @@ async function search(
   );
   post({
     type: 'result',
-    courses: improved.map((c) =>
+    courses: pickDistinct(improved, MAX_COURSES).map((c) =>
       toResult(g, c, seed, scoreBreakdown(c.course, profile, opts.desiredMix ?? MIX_ROAD, weights)),
     ),
   });

@@ -11,7 +11,7 @@ import {
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { beamSearch } from '../src/search/beam';
-import { distinctCandidates, improveCandidates } from '../src/search/improve';
+import { distinctCandidates, improveCandidates, pickDistinct } from '../src/search/improve';
 import { randomWalkSearch } from '../src/search/randomWalk';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
@@ -280,18 +280,20 @@ describe('distinctCandidates', () => {
     expect(beam.length).toBeGreaterThan(4);
 
     // This fixture is 250 m across: every runner-up shares most of the winner's
-    // edges, so the default threshold is right to keep only one course.
-    const kept = distinctCandidates(beam, 4);
-    expect(kept).toEqual([beam[0]]);
+    // edges, so a strict bar keeps only one course.
+    const strict = distinctCandidates(beam, 4);
+    expect(strict).toEqual([beam[0]]);
 
-    // Loosened, it fills up to the limit and still leads with the best.
-    const loose = distinctCandidates(beam, 4, 0.95);
-    expect(loose.length).toBe(4);
-    expect(loose[0]).toBe(beam[0]);
-    const edges = loose.map((c) => new Set(c.path.edges));
+    // Relaxing until there is a choice offers more than that, best first,
+    // without ever dressing up an identical course as an alternative.
+    const kept = pickDistinct(beam, 4);
+    expect(kept.length).toBeGreaterThan(strict.length);
+    expect(kept.length).toBeLessThanOrEqual(4);
+    expect(kept[0]).toBe(beam[0]);
+    const edges = kept.map((c) => new Set(c.path.edges));
     for (let i = 0; i < edges.length; i++) {
       for (let j = i + 1; j < edges.length; j++) {
-        expect(overlap(edges[i]!, edges[j]!)).toBeLessThanOrEqual(0.95);
+        expect(overlap(edges[i]!, edges[j]!)).toBeLessThanOrEqual(0.92);
       }
     }
   });
