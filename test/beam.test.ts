@@ -11,7 +11,7 @@ import {
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { beamSearch } from '../src/search/beam';
-import { improveCandidates } from '../src/search/improve';
+import { distinctCandidates, improveCandidates } from '../src/search/improve';
 import { randomWalkSearch } from '../src/search/randomWalk';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
@@ -264,6 +264,36 @@ describe('improveCandidates', () => {
     expect(improved[0]!.score).toBeLessThanOrEqual(beam[0]!.score + 1e-9);
     expect(improved[0]!.course.lengthM).toBeGreaterThanOrEqual(1200 * 0.97);
     expect(improved[0]!.course.lengthM).toBeLessThanOrEqual(1200 * 1.03);
+  });
+});
+
+describe('distinctCandidates', () => {
+  const overlap = (a: Set<number>, b: Set<number>) => {
+    let shared = 0;
+    for (const e of a) if (b.has(e)) shared++;
+    return shared / Math.min(a.size, b.size);
+  };
+
+  it('keeps the winner first and drops the near-copies behind it', async () => {
+    const target = flatTarget(1200);
+    const beam = await beamSearch(graph, startNode, target, 1200, { seed: 2 });
+    expect(beam.length).toBeGreaterThan(4);
+
+    // This fixture is 250 m across: every runner-up shares most of the winner's
+    // edges, so the default threshold is right to keep only one course.
+    const kept = distinctCandidates(beam, 4);
+    expect(kept).toEqual([beam[0]]);
+
+    // Loosened, it fills up to the limit and still leads with the best.
+    const loose = distinctCandidates(beam, 4, 0.95);
+    expect(loose.length).toBe(4);
+    expect(loose[0]).toBe(beam[0]);
+    const edges = loose.map((c) => new Set(c.path.edges));
+    for (let i = 0; i < edges.length; i++) {
+      for (let j = i + 1; j < edges.length; j++) {
+        expect(overlap(edges[i]!, edges[j]!)).toBeLessThanOrEqual(0.95);
+      }
+    }
   });
 });
 

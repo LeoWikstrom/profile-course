@@ -7,7 +7,12 @@ import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages
 import { createMap } from './ui/map';
 import { renderInteractiveChart } from './ui/profileChart';
 import { captureTops, playReorder, slideIn } from './ui/animate';
-import { hideResult, renderResult, type ResultElements } from './ui/resultPanel';
+import {
+  hideResult,
+  renderCourseTabs,
+  renderResult,
+  type ResultElements,
+} from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
 import SearchWorker from './search/worker?worker';
 
@@ -90,6 +95,66 @@ let seed = 1;
 let searching = false;
 let gpxLabel: string | null = null;
 let lastResult: { course: CourseResult; profile: TargetProfile } | null = null;
+/** The courses this search found, best first; `lastResult` is the shown one. */
+let candidates: { course: CourseResult; profile: TargetProfile }[] = [];
+let shownCandidate = 0;
+const courseTabs = document.getElementById('course-tabs') as HTMLElement;
+
+function drawCourseTabs(): void {
+  renderCourseTabs(
+    courseTabs,
+    candidates.map((c) => c.course),
+    shownCandidate,
+    showCandidate,
+  );
+}
+
+/** Switch to one of the search's other courses. Edits belong to a course. */
+function showCandidate(index: number): void {
+  const picked = candidates[index];
+  if (!picked || index === shownCandidate) return;
+  if (editingMode) exitEditing();
+  shownCandidate = index;
+  lastResult = picked;
+  // The worker still holds the course we just left.
+  workerCourseStale = true;
+  showResult(picked);
+  drawCourseTabs();
+  startHint.textContent = `Course ${index + 1} of ${candidates.length} — mismatch ${picked.course.score.toFixed(1)}.`;
+  persistSession();
+}
+
+// Desktop: the number keys switch course, and the arrows walk the tab strip.
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || candidates.length < 2) return;
+  const focus = document.activeElement;
+  const typing =
+    focus instanceof HTMLInputElement ||
+    focus instanceof HTMLTextAreaElement ||
+    focus instanceof HTMLSelectElement;
+  const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+  if (step !== 0 && courseTabs.contains(focus)) {
+    const next = Math.min(candidates.length - 1, Math.max(0, shownCandidate + step));
+    showCandidate(next);
+    (courseTabs.children[next] as HTMLElement | undefined)?.focus();
+    e.preventDefault();
+    return;
+  }
+  if (typing || e.key < '1' || e.key > '9') return;
+  showCandidate(Number(e.key) - 1);
+});
+
+/** Replace the shown course, keeping its tab (an edit or improve landed). */
+function replaceShownCandidate(result: { course: CourseResult; profile: TargetProfile }): void {
+  lastResult = result;
+  if (candidates.length === 0) {
+    candidates = [result];
+    shownCandidate = 0;
+  } else {
+    candidates[shownCandidate] = result;
+  }
+  drawCourseTabs();
+}
 
 function persistSession(): void {
   saveSession({
@@ -366,7 +431,7 @@ function undoEdit(): void {
   workerCourseStale = true; // the worker's cached path is the edit we just dropped
   editedPoints.pop();
   drawEditMarkers();
-  lastResult = previous;
+  replaceShownCandidate(previous);
   showResult(previous, lastAction);
   startHint.textContent = `Edit undone — mismatch back to ${previous.course.score.toFixed(1)}.`;
   persistSession();
@@ -641,9 +706,15 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     case 'result': {
       const profile = activeProfile();
-      if (profile) {
-        lastResult = { course: msg.course, profile };
+      if (profile && msg.courses.length > 0) {
+        candidates = msg.courses.map((course) => ({ course, profile }));
+        shownCandidate = 0;
+        lastResult = candidates[0]!;
         showResult(lastResult);
+        drawCourseTabs();
+        if (candidates.length > 1) {
+          startHint.textContent = `${candidates.length} courses found — switch with the tabs at the top, or press 1–${candidates.length}.`;
+        }
         persistSession();
       }
       searchDone();
@@ -653,8 +724,8 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       const profile = activeProfile();
       pendingEdit = false;
       if (profile) {
-        lastResult = { course: msg.course, profile };
-        showResult(lastResult, { label: 'Improve this course', onAction: sendImproveMatched });
+        replaceShownCandidate({ course: msg.course, profile });
+        showResult(lastResult!, { label: 'Improve this course', onAction: sendImproveMatched });
         const summary =
           msg.snappedFraction < 0.9
             ? `Matched ${Math.round(msg.snappedFraction * 100)} % of the course to the path network.`
@@ -663,7 +734,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
         persistSession();
         // Stay in editing mode: re-arm on the updated course.
         if (editingMode) {
-          armEditing(lastResult);
+          armEditing(lastResult!);
           setEditStatus(summary);
           refreshEditBar();
         }
@@ -731,6 +802,9 @@ function setFullProfile(profile: TargetProfile): void {
 function clearResult(): void {
   if (editingMode) exitEditing();
   lastResult = null;
+  candidates = [];
+  shownCandidate = 0;
+  drawCourseTabs();
   lastAction = undefined;
   editHistory.length = 0;
   hideResult(resultEls);
@@ -945,7 +1019,7 @@ gpxInput.addEventListener('change', async () => {
   try {
     const gpx = parseGpx(await file.text());
     gpxLabel = gpx.name ?? file.name;
-    lastResult = null;
+    clearResult();
     if (gpx.hasElevation) {
       setFullProfile(buildTargetProfile(gpx.points));
     } else {
@@ -1027,7 +1101,8 @@ async function boot(): Promise<void> {
     if (session.settings.start) map.setStart(session.settings.start);
     radiusSlider.dispatchEvent(new Event('input'));
     if (session.result) {
-      lastResult = session.result;
+      // Only the shown course is persisted, so a reload comes back one-tabbed.
+      replaceShownCandidate(session.result);
       showResult(session.result);
     }
   }

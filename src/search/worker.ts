@@ -33,7 +33,7 @@ import {
 } from './edit';
 import { pathNodes } from '../graph/ksp';
 import { beamSearch } from './beam';
-import { improveCandidates } from './improve';
+import { distinctCandidates, improveCandidates } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
 import {
   assembleCourse,
@@ -209,6 +209,9 @@ function toResult(
     seed,
   };
 }
+
+/** How many courses one search offers as tabs. */
+const MAX_COURSES = 4;
 
 interface SearchOptionsIn {
   desiredMix: [number, number, number, number] | null;
@@ -420,10 +423,14 @@ async function search(
 
   const tSearch = performance.now();
   post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
-  const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
+  // Pick the courses to offer before improving, so the whole improvement
+  // budget goes to courses the user can actually choose.
+  const shortlist = distinctCandidates(candidates, MAX_COURSES);
+  const improved = await improveCandidates(g, startNode, shortlist, profile, targetLengthMeters, {
     desiredMix: opts.desiredMix,
     weights,
     validatePath,
+    maxCandidates: MAX_COURSES,
     shouldCancel: () => cancelled,
   });
   if (cancelled) return;
@@ -440,11 +447,8 @@ async function search(
   );
   post({
     type: 'result',
-    course: toResult(
-      g,
-      improved[0]!,
-      seed,
-      scoreBreakdown(improved[0]!.course, profile, opts.desiredMix ?? MIX_ROAD, weights),
+    courses: improved.map((c) =>
+      toResult(g, c, seed, scoreBreakdown(c.course, profile, opts.desiredMix ?? MIX_ROAD, weights)),
     ),
   });
 }

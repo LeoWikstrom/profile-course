@@ -25,6 +25,35 @@ export interface ImproveOptions {
   shouldCancel?: () => boolean;
 }
 
+/** Above this share of shared edges, two courses are the same run out. */
+const SAME_COURSE_OVERLAP = 0.6;
+
+function edgeOverlap(a: Set<number>, b: Set<number>): number {
+  let shared = 0;
+  for (const edge of a) if (b.has(edge)) shared++;
+  return shared / Math.min(a.size, b.size);
+}
+
+/**
+ * The best candidates that actually run somewhere else, best first. Beam
+ * search returns many near-copies of its winner, which make useless choices.
+ */
+export function distinctCandidates(
+  candidates: WalkCandidate[],
+  limit: number,
+  maxOverlap = SAME_COURSE_OVERLAP,
+): WalkCandidate[] {
+  const chosen: { candidate: WalkCandidate; edges: Set<number> }[] = [];
+  for (const candidate of candidates) {
+    if (chosen.length >= limit) break;
+    const edges = new Set(candidate.path.edges);
+    if (chosen.every((c) => edgeOverlap(edges, c.edges) <= maxOverlap)) {
+      chosen.push({ candidate, edges });
+    }
+  }
+  return chosen.map((c) => c.candidate);
+}
+
 function spliceWindow(
   path: CoursePath,
   from: number,

@@ -116,7 +116,14 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       start/finish cannot be moved or deleted this way. Distances along the course are cumulative
       haversine, never index × 25 m: each edge spreads its own samples, so the step is 25–50 m. Editing feedback also shows in a pill over the map, because
       the sheet may be collapsed.
-- [ ] **Multiple candidates** (next): keep the top N courses from one search and switch between
-      them with tabs at the top of the panel, plus a desktop keyboard shortcut.
+- [x] **Multiple candidates**: a search returns up to 4 courses, chosen before the improve pass
+      so the whole improvement budget goes to courses the user can pick. They are chosen for
+      being genuinely different runs: a candidate sharing over 60 % of another's edges is a
+      near-copy and is dropped, which in a small area legitimately leaves a single course (the
+      tab strip then hides itself). Tabs sit in the sticky sheet top, labelled with the
+      mismatch; 1–9 selects, and the arrows walk the strip once a tab has focus. Switching
+      leaves editing mode and marks the worker's cached path stale, so the next edit or improve
+      re-matches. An edit, undo or improve rewrites the shown tab in place; only the shown
+      course is persisted or shared in the URL.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava
       personal heatmap, OSM GPS traces.

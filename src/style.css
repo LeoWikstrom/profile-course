@@ -241,6 +241,34 @@ button:not(:disabled) {
   z-index: 1;
 }
 
+/* One tab per course the search kept, always in reach at the top of the
+   sheet. The right padding keeps the last tab clear of the GPX button. */
+#course-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 92px 6px 0;
+  scrollbar-width: none;
+}
+
+#course-tabs[hidden] {
+  display: none;
+}
+
+#course-tabs > button {
+  width: auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+#course-tabs > button[aria-selected='true'] {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
 #course-actions > button {
   flex: 1;
 }

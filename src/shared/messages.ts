@@ -152,7 +152,8 @@ export type WorkerToMain =
   | { type: 'areas'; areas: AreaInfo[] }
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
-  | { type: 'result'; course: CourseResult }
+  /** The best course first, then the distinct runners-up the search kept. */
+  | { type: 'result'; courses: CourseResult[] }
   | { type: 'matched'; course: CourseResult; snappedFraction: number; improvable: boolean }
   | { type: 'noCourse'; message: string }
   | { type: 'error'; message: string };

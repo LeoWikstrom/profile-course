@@ -11,6 +11,32 @@ export interface ResultElements {
   downloadButton: HTMLButtonElement;
 }
 
+/**
+ * One tab per course the search kept, labelled with its mismatch. A single
+ * course needs no tabs, so the strip stays hidden until there is a choice.
+ */
+export function renderCourseTabs(
+  el: HTMLElement,
+  courses: { score: number }[],
+  selected: number,
+  onSelect: (index: number) => void,
+): void {
+  el.textContent = '';
+  el.hidden = courses.length < 2;
+  if (el.hidden) return;
+  courses.forEach((course, i) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(i === selected));
+    tab.tabIndex = i === selected ? 0 : -1;
+    tab.textContent = `${i + 1} · ${course.score.toFixed(1)}`;
+    tab.title = `Course ${i + 1}, mismatch ${course.score.toFixed(1)} — or press ${i + 1}`;
+    tab.addEventListener('click', () => onSelect(i));
+    el.appendChild(tab);
+  });
+}
+
 export function hideResult(els: ResultElements): void {
   els.stats.hidden = true;
   els.advanced.hidden = true;
