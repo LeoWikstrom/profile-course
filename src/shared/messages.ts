@@ -152,8 +152,15 @@ export type WorkerToMain =
   | { type: 'areas'; areas: AreaInfo[] }
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
-  /** The best course first, then the distinct runners-up the search kept. */
-  | { type: 'result'; courses: CourseResult[] }
+  /**
+   * Courses arrive one at a time: `courses` opens that many tabs, each filled
+   * by a `course` of its own search, and `coursesDone` closes any the search
+   * could not fill with a course worth offering.
+   */
+  | { type: 'courses'; total: number }
+  | { type: 'courseProgress'; index: number; fraction: number }
+  | { type: 'course'; index: number; course: CourseResult }
+  | { type: 'coursesDone'; ready: number }
   | { type: 'matched'; course: CourseResult; snappedFraction: number; improvable: boolean }
   | { type: 'noCourse'; message: string }
   | { type: 'error'; message: string };

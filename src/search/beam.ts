@@ -37,6 +37,12 @@ export interface BeamOptions {
   /** Additional allowed start nodes (e.g. everything inside the zone). */
   startNodes?: number[] | null;
   /**
+   * Edges already spoken for by a course this search has offered. They are
+   * costed like unpleasant ground so the next course goes elsewhere, without
+   * being forbidden — a park with one entrance still has to be enterable.
+   */
+  avoidEdges?: Set<number> | null;
+  /**
    * Must-pass constraints, in order. nodes = graph nodes counting as "at the
    * via"; dist = multi-source Dijkstra distances to them; kmM = optional
    * course distance (metres) near which the via must be reached.
@@ -93,6 +99,13 @@ interface TargetPrefix {
 }
 
 const MAX_ROOTS = 120;
+
+/**
+ * Per metre of an avoided edge, in the same units as an edge's own penalty —
+ * about as off-putting as a busy road, which steers the course away without
+ * ruling out the one bridge or underpass that makes an area reachable.
+ */
+const AVOID_PENALTY = 0.5;
 
 function rootCell(graph: Graph, node: number): number {
   const cy = Math.round((graph.nodeLat[node]! * 111320) / 250);
@@ -232,6 +245,7 @@ export async function beamSearch(
     returnToStart = false,
     validEnd = null,
     startNodes = null,
+    avoidEdges = null,
     vias = [],
     viaSlackM = Math.max(500, targetLengthM * 0.05),
     onProgress,
@@ -499,7 +513,8 @@ export async function beamSearch(
         s.sampleCount.push(s.sampleCount[si]! + m - 1);
         s.gain.push(gain);
         s.loss.push(loss);
-        s.penaltyLen.push(s.penaltyLen[si]! + e.penalty * e.lengthM);
+        const avoided = avoidEdges?.has(ei) ? AVOID_PENALTY : 0;
+        s.penaltyLen.push(s.penaltyLen[si]! + (e.penalty + avoided) * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
         const rootIdx = s.root[si]!;
         const dy = (graph.nodeLat[nextNode]! - graph.nodeLat[rootIdx]!) * 111_320;

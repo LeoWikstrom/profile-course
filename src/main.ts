@@ -100,15 +100,20 @@ let seed = 1;
 let searching = false;
 let gpxLabel: string | null = null;
 let lastResult: { course: CourseResult; profile: TargetProfile } | null = null;
-/** The courses this search found, best first; `lastResult` is the shown one. */
-let candidates: { course: CourseResult; profile: TargetProfile }[] = [];
+/**
+ * One slot per course the search is looking for, filled as each arrives;
+ * `lastResult` is the shown one.
+ */
+let candidates: ({ course: CourseResult; profile: TargetProfile } | null)[] = [];
+/** How far the search behind each unfilled slot has got, 0–1. */
+let candidateProgress: number[] = [];
 let shownCandidate = 0;
 const courseTabs = document.getElementById('course-tabs') as HTMLElement;
 
 function drawCourseTabs(): void {
   renderCourseTabs(
     courseTabs,
-    candidates.map((c) => c.course),
+    candidates.map((c, i) => ({ score: c?.course.score ?? null, fraction: candidateProgress[i] ?? 0 })),
     shownCandidate,
     showCandidate,
   );
@@ -125,7 +130,7 @@ function showCandidate(index: number): void {
   workerCourseStale = true;
   showResult(picked);
   drawCourseTabs();
-  startHint.textContent = `Course ${index + 1} of ${candidates.length} — mismatch ${picked.course.score.toFixed(1)}.`;
+  startHint.textContent = `Course ${index + 1} — mismatch ${picked.course.score.toFixed(1)}.`;
   persistSession();
 }
 
@@ -154,6 +159,7 @@ function replaceShownCandidate(result: { course: CourseResult; profile: TargetPr
   lastResult = result;
   if (candidates.length === 0) {
     candidates = [result];
+    candidateProgress = [1];
     shownCandidate = 0;
   } else {
     candidates[shownCandidate] = result;
@@ -709,18 +715,39 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'bestSoFar':
       map.drawCourse(msg.segments, { faded: true });
       break;
-    case 'result': {
+    case 'courses':
+      candidates = Array.from({ length: msg.total }, () => null);
+      candidateProgress = candidates.map(() => 0);
+      shownCandidate = 0;
+      drawCourseTabs();
+      break;
+    case 'courseProgress':
+      candidateProgress[msg.index] = msg.fraction;
+      drawCourseTabs();
+      break;
+    case 'course': {
       const profile = activeProfile();
-      if (profile && msg.courses.length > 0) {
-        candidates = msg.courses.map((course) => ({ course, profile }));
-        shownCandidate = 0;
-        lastResult = candidates[0]!;
-        showResult(lastResult);
-        drawCourseTabs();
-        if (candidates.length > 1) {
-          startHint.textContent = `${candidates.length} courses found — switch with the tabs at the top, or press 1–${candidates.length}.`;
+      if (profile) {
+        candidates[msg.index] = { course: msg.course, profile };
+        candidateProgress[msg.index] = 1;
+        // The first course to land is shown straight away; the rest wait in
+        // their tabs so an arriving alternative cannot pull the map away.
+        if (msg.index === shownCandidate) {
+          lastResult = candidates[msg.index]!;
+          showResult(lastResult);
         }
+        drawCourseTabs();
         persistSession();
+      }
+      break;
+    }
+    case 'coursesDone': {
+      // Close the tabs no course could be found for.
+      candidates.length = Math.max(msg.ready, 1);
+      candidateProgress.length = candidates.length;
+      drawCourseTabs();
+      if (msg.ready > 1) {
+        startHint.textContent = `${msg.ready} courses found — switch with the tabs at the top, or press 1–${msg.ready}.`;
       }
       searchDone();
       break;
@@ -808,6 +835,7 @@ function clearResult(): void {
   if (editingMode) exitEditing();
   lastResult = null;
   candidates = [];
+  candidateProgress = [];
   shownCandidate = 0;
   drawCourseTabs();
   lastAction = undefined;

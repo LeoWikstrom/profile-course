@@ -33,7 +33,7 @@ import {
 } from './edit';
 import { pathNodes } from '../graph/ksp';
 import { beamSearch } from './beam';
-import { improveCandidates, pickDistinct } from './improve';
+import { improveCandidates, sameRunAs } from './improve';
 import { randomWalkSearch, type WalkCandidate } from './randomWalk';
 import {
   assembleCourse,
@@ -213,6 +213,13 @@ function toResult(
 /** How many courses one search offers as tabs. */
 const MAX_COURSES = 4;
 
+/**
+ * How far apart two courses must begin when the start may be anywhere in the
+ * zone. Roughly a block: near enough to still be "at the start", far enough
+ * that the alternative does not simply retrace the first course's opening.
+ */
+const ALT_START_APART_M = 300;
+
 interface SearchOptionsIn {
   desiredMix: [number, number, number, number] | null;
   returnToStart: boolean;
@@ -362,6 +369,7 @@ async function search(
       : undefined;
 
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
+  post({ type: 'courses', total: MAX_COURSES });
   let lastBestScore = Infinity;
   const streamBest = (best: { path: CoursePath; score: number } | null) => {
     if (best && best.score < lastBestScore) {
@@ -370,83 +378,122 @@ async function search(
     }
   };
 
-  const candidates =
-    algorithm === 'walk'
-      ? await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
-          seed,
-          desiredMix: opts.desiredMix,
-          returnToStart: opts.returnToStart,
-          weights,
-          validEnd,
-          startNodes,
-          onProgress: (done, total, best) => {
-            post({
-              type: 'progress',
-              stage: 'searching',
-              fraction: 0.3 + 0.6 * (done / total),
-              bestScore: best?.score ?? null,
-            });
-            streamBest(best);
-          },
-          shouldCancel: () => cancelled,
-        })
-      : await beamSearch(g, startNode, profile, targetLengthMeters, {
-          seed,
-          beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
-          vias,
-          viaSlackM: Math.max(100, (opts.viaToleranceKm || 1) * 1000),
-          desiredMix: opts.desiredMix,
-          returnToStart: opts.returnToStart,
-          weights,
-          validEnd,
-          startNodes,
-          onProgress: (bucket, total, best) => {
-            post({
-              type: 'progress',
-              stage: 'searching',
-              fraction: 0.3 + 0.6 * (bucket / total),
-              bestScore: best?.score ?? null,
-            });
-            streamBest(best);
-          },
-          shouldCancel: () => cancelled,
-        });
+  // Each tab gets a search of its own, steered off the ground the courses
+  // before it took — picking alternatives out of one search's runners-up gave
+  // four near-copies of the winner, all leaving by the same street.
+  const picked: WalkCandidate[] = [];
+  const avoidEdges = new Set<number>();
+  const usedRoots: number[] = [];
 
-  if (cancelled) return;
-  if (candidates.length === 0) {
-    post({
-      type: 'noCourse',
-      message: 'No course found within ±3 % of the target length. Try a larger radius.',
+  for (let run = 0; run < MAX_COURSES && !cancelled; run++) {
+    const first = run === 0;
+    // Starting anywhere means the alternatives can also start elsewhere.
+    const runStarts =
+      startNodes && !first
+        ? startNodes.filter((n) =>
+            usedRoots.every(
+              (r) =>
+                haversineMeters(g.nodeLat[n]!, g.nodeLon[n]!, g.nodeLat[r]!, g.nodeLon[r]!) >
+                ALT_START_APART_M,
+            ),
+          )
+        : startNodes;
+    const onProgress = (done: number, total: number, best: WalkCandidate | null): void => {
+      post({ type: 'courseProgress', index: run, fraction: (0.9 * done) / total });
+      post({
+        type: 'progress',
+        stage: first ? 'searching' : `alternative ${run + 1}`,
+        fraction: 0.3 + 0.6 * (done / total),
+        bestScore: first ? (best?.score ?? null) : null,
+      });
+      // Only the first run may paint the map: the later ones run under a
+      // course the user is already looking at.
+      if (first) streamBest(best);
+    };
+
+    const candidates =
+      algorithm === 'walk'
+        ? await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
+            seed: seed + run * 101,
+            desiredMix: opts.desiredMix,
+            returnToStart: opts.returnToStart,
+            weights,
+            validEnd,
+            startNodes: runStarts,
+            onProgress,
+            shouldCancel: () => cancelled,
+          })
+        : await beamSearch(g, startNode, profile, targetLengthMeters, {
+            seed: seed + run * 101,
+            beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
+            vias,
+            viaSlackM: Math.max(100, (opts.viaToleranceKm || 1) * 1000),
+            desiredMix: opts.desiredMix,
+            returnToStart: opts.returnToStart,
+            weights,
+            validEnd,
+            startNodes: runStarts,
+            avoidEdges: first ? null : avoidEdges,
+            onProgress,
+            shouldCancel: () => cancelled,
+          });
+
+    if (cancelled) break;
+    if (candidates.length === 0) {
+      if (first) {
+        post({
+          type: 'noCourse',
+          message: 'No course found within ±3 % of the target length. Try a larger radius.',
+        });
+        return;
+      }
+      continue;
+    }
+
+    const tSearch = performance.now();
+    if (first) {
+      post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
+    }
+    const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
+      desiredMix: opts.desiredMix,
+      weights,
+      validatePath,
+      shouldCancel: () => cancelled,
     });
-    return;
+    if (cancelled) break;
+    post({ type: 'courseProgress', index: run, fraction: 1 });
+
+    const winner = improved[0]!;
+    // Steering can fail — a corridor with one way through has to stay usable.
+    if (sameRunAs(winner, picked)) continue;
+    for (const ei of winner.path.edges) avoidEdges.add(ei);
+    usedRoots.push(pathRoot(g, winner.path));
+
+    if (first) {
+      // Keep the winner editable/improvable like a matched course.
+      matchedPath = winner.path;
+      matchedKey = preparedKey;
+      const tDone = performance.now();
+      console.log(
+        `search timings (${algorithm}): prepare ${(tGraph - t0).toFixed(0)} ms, ` +
+          `search ${(tSearch - tGraph).toFixed(0)} ms, improve ${(tDone - tSearch).toFixed(0)} ms, ` +
+          `score ${candidates[0]!.score.toFixed(2)} -> ${winner.score.toFixed(2)}`,
+      );
+    }
+    post({
+      type: 'course',
+      index: picked.length,
+      course: toResult(
+        g,
+        winner,
+        seed,
+        scoreBreakdown(winner.course, profile, opts.desiredMix ?? MIX_ROAD, weights),
+      ),
+    });
+    picked.push(winner);
   }
 
-  const tSearch = performance.now();
-  post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
-  const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
-    desiredMix: opts.desiredMix,
-    weights,
-    validatePath,
-    shouldCancel: () => cancelled,
-  });
-  if (cancelled) return;
-
-  // Keep the winner editable/improvable like a matched course.
-  matchedPath = improved[0]!.path;
-  matchedKey = preparedKey;
-
-  const tDone = performance.now();
-  console.log(
-    `search timings (${algorithm}): prepare ${(tGraph - t0).toFixed(0)} ms, ` +
-      `search ${(tSearch - tGraph).toFixed(0)} ms, improve ${(tDone - tSearch).toFixed(0)} ms, ` +
-      `score ${candidates[0]!.score.toFixed(2)} -> ${improved[0]!.score.toFixed(2)}`,
-  );
-  post({
-    type: 'result',
-    courses: pickDistinct(improved, MAX_COURSES).map((c) =>
-      toResult(g, c, seed, scoreBreakdown(c.course, profile, opts.desiredMix ?? MIX_ROAD, weights)),
-    ),
-  });
+  post({ type: 'coursesDone', ready: picked.length });
 }
 
 async function matchCourse(

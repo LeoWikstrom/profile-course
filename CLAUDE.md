@@ -49,6 +49,13 @@ circles in the cemetery" kept coming back — a dense patch of paths can fake an
 profile. The beam now carries each state's reach from its own root and ranks on it, so laps lose
 while they are being built rather than after scoring, when the whole beam already laps.
 
+The corridor cells (~14 m, fine enough to keep opposite sidewalks distinct) also catch a lap that
+comes back round on a *parallel* path — a twin bike/foot path, the next aisle of a cemetery.
+Reuse within the 1 km oscillation window is a bounce or a tight circle; beyond it, it is a lap,
+and counts as repeated ground. Without that, a course could re-climb the same hill for free and
+manufacture the target's total gain instead of matching its features, which Leo wants always
+discouraged.
+
 - Phase 2 baseline: 2 000 seeded random walks, keep best 20, local improvement.
 - Phase 3: beam search over `(node, 100 m bucket)` states, B = 200/bucket, Dijkstra pruning on
   reachability, k-shortest-paths window replacement (300–1 500 m, k = 5, two passes).
@@ -123,14 +130,22 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       start/finish cannot be moved or deleted this way. Distances along the course are cumulative
       haversine, never index × 25 m: each edge spreads its own samples, so the step is 25–50 m. Editing feedback also shows in a pill over the map, because
       the sheet may be collapsed.
-- [x] **Multiple candidates**: a search returns up to 4 courses, picked *after* the improve pass
-      from the whole candidate list — picking first and improving only those made the winner
-      measurably worse, because improvement reorders the top candidates. The alternatives must
-      actually run somewhere else, so a candidate sharing too many edges with one already chosen
-      is dropped; the bar relaxes 0.6 → 0.8 → 0.92 until there are four, since the longer a
-      course is the more any two ways round it share and a strict bar simply yields no tabs at
-      all. Tabs sit in the sticky sheet top, labelled with the mismatch; 1–9 selects, and the
-      arrows walk the strip once a tab has focus. Switching leaves editing mode and marks the
+- [x] **Multiple candidates**: a search offers up to 4 courses, each from a search of its own.
+      Picking them out of one search's runners-up gave four near-copies leaving by the same
+      street (on the test fixture the runners-up sit at 0.88–1.00 edge overlap with the winner),
+      so every run after the first costs the previous courses' edges like unpleasant ground —
+      a nudge, not a ban, since a park with one entrance still has to be enterable — and, when
+      the start may be anywhere in the zone, drops start nodes within 300 m of one already used.
+      A run whose winner still covers >0.8 of a course already offered is thrown away rather
+      than shown as a false alternative. The runs are sequential, so tabs fill one at a time:
+      an unfilled tab shows its own search's percentage and cannot be clicked, and `coursesDone`
+      closes the ones nothing was found for. Run 0 is untouched by all this — it is the same
+      search, improved from the same full candidate list, as before (picking before improving
+      made the winner measurably worse, because improvement reorders the top candidates) — so
+      the first course lands no later than it used to. Tabs sit in the sticky sheet top,
+      labelled with the mismatch; unselected ones are quiet outlines against the app's solid
+      blue so the selected one is obvious; 1–9 selects, and the arrows walk the strip once a
+      tab has focus. Switching leaves editing mode and marks the
       worker's cached path stale, so the next edit or improve re-matches. An edit, undo or
       improve rewrites the shown tab in place; only the shown course is persisted or shared.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava

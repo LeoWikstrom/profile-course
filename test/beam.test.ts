@@ -11,8 +11,8 @@ import {
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { beamSearch } from '../src/search/beam';
-import { distinctCandidates, improveCandidates, pickDistinct } from '../src/search/improve';
-import { randomWalkSearch } from '../src/search/randomWalk';
+import { improveCandidates, sameRunAs } from '../src/search/improve';
+import { randomWalkSearch, type WalkCandidate } from '../src/search/randomWalk';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
 let graph: Graph;
@@ -267,35 +267,35 @@ describe('improveCandidates', () => {
   });
 });
 
-describe('distinctCandidates', () => {
-  const overlap = (a: Set<number>, b: Set<number>) => {
+describe('alternative courses', () => {
+  const overlap = (a: WalkCandidate, b: WalkCandidate) => {
+    const edges = new Set(b.path.edges);
     let shared = 0;
-    for (const e of a) if (b.has(e)) shared++;
-    return shared / Math.min(a.size, b.size);
+    for (const e of new Set(a.path.edges)) if (edges.has(e)) shared++;
+    return shared / Math.min(new Set(a.path.edges).size, edges.size);
   };
 
-  it('keeps the winner first and drops the near-copies behind it', async () => {
+  it('sees the runners-up of one search as the same run', async () => {
     const target = flatTarget(1200);
     const beam = await beamSearch(graph, startNode, target, 1200, { seed: 2 });
     expect(beam.length).toBeGreaterThan(4);
 
-    // This fixture is 250 m across: every runner-up shares most of the winner's
-    // edges, so a strict bar keeps only one course.
-    const strict = distinctCandidates(beam, 4);
-    expect(strict).toEqual([beam[0]]);
+    // This fixture is 250 m across: every runner-up is a near-copy of the
+    // winner, which is why alternatives need searches of their own.
+    expect(sameRunAs(beam[0]!, [])).toBe(false);
+    expect(sameRunAs(beam[1]!, [beam[0]!])).toBe(true);
 
-    // Relaxing until there is a choice offers more than that, best first,
-    // without ever dressing up an identical course as an alternative.
-    const kept = pickDistinct(beam, 4);
-    expect(kept.length).toBeGreaterThan(strict.length);
-    expect(kept.length).toBeLessThanOrEqual(4);
-    expect(kept[0]).toBe(beam[0]);
-    const edges = kept.map((c) => new Set(c.path.edges));
-    for (let i = 0; i < edges.length; i++) {
-      for (let j = i + 1; j < edges.length; j++) {
-        expect(overlap(edges[i]!, edges[j]!)).toBeLessThanOrEqual(0.92);
-      }
-    }
+    const elsewhere: WalkCandidate = { ...beam[0]!, path: { edges: [-1], dirs: [1] } };
+    expect(sameRunAs(elsewhere, [beam[0]!])).toBe(false);
+  });
+
+  it('avoidEdges steers the next search off the ground already taken', async () => {
+    const target = flatTarget(1200);
+    const first = await beamSearch(graph, startNode, target, 1200, { seed: 2 });
+    const avoidEdges = new Set(first[0]!.path.edges);
+    const second = await beamSearch(graph, startNode, target, 1200, { seed: 2, avoidEdges });
+    expect(second.length).toBeGreaterThan(0);
+    expect(overlap(second[0]!, first[0]!)).toBeLessThan(overlap(first[1]!, first[0]!));
   });
 });
 

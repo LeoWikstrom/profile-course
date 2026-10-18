@@ -197,9 +197,12 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     const dx = (graph.nodeLon[far]! - lon0) * mPerLon;
     if (dx * dx + dy * dy > reachSq) reachSq = dx * dx + dy * dy;
 
-    // Corridor check: reversing along a parallel twin path (bike + foot side
-    // by side) is an out-and-back even though the edges differ. ~14 m cells
-    // keep opposite street sidewalks (15-20 m apart) distinct.
+    // Corridor check: covering ground a second time counts even when the path
+    // is a different one — a twin bike/foot path alongside, or the next aisle
+    // of a cemetery. ~14 m cells keep opposite street sidewalks (15-20 m
+    // apart) distinct. Without this, a lap that comes back round on parallel
+    // paths re-climbs the same hill for free, which is how courses used to
+    // manufacture the target's gain instead of matching its features.
     if (e.cellIds && e.cellHead) {
       const m2 = e.cellIds.length;
       const spacing = e.lengthM / Math.max(1, m2 - 1);
@@ -209,13 +212,15 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
         const head = forward ? e.cellHead[idx]! : (e.cellHead[idx]! + 180) % 360;
         const d = distSoFar + k * spacing;
         const prevPass = corridor.get(cell);
-        if (
-          prevPass &&
-          prevPass.edge !== ei && // same-edge reuse is handled below
-          d - prevPass.dist < OSCILLATION_WINDOW_M &&
-          Math.abs(angleDiffDeg(prevPass.head, head)) > 135
-        ) {
-          oscillationLen += 2 * spacing;
+        if (prevPass && prevPass.edge !== ei) {
+          // Same-edge reuse is handled below; this is the parallel case.
+          if (d - prevPass.dist < OSCILLATION_WINDOW_M) {
+            // Reversing is a bounce, carrying on is a tight circle.
+            oscillationLen +=
+              Math.abs(angleDiffDeg(prevPass.head, head)) > 135 ? 2 * spacing : spacing;
+          } else {
+            repeatLen += spacing; // a lap: the same ground and the same climb
+          }
         }
         corridor.set(cell, { head, dist: d, edge: ei });
       }

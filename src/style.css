@@ -255,18 +255,28 @@ button:not(:disabled) {
   display: none;
 }
 
+/* Every other button in the app is solid blue, so the strip would read as all
+   selected: the unselected tabs are quiet outlines instead. */
 #course-tabs > button {
   width: auto;
   min-height: 30px;
   padding: 0 10px;
   font-size: 0.8rem;
   white-space: nowrap;
+  background: Canvas;
+  color: GrayText;
+  border-color: color-mix(in srgb, GrayText 50%, transparent);
 }
 
 #course-tabs > button[aria-selected='true'] {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
+  font-weight: 600;
+}
+
+#course-tabs > button:disabled {
+  font-style: italic;
 }
 
 #course-actions > button {
