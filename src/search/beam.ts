@@ -72,8 +72,11 @@ interface StateStore {
   root: number[];
   /** Bitmask of via points visited so far, in order. */
   viaMask: number[];
-  /** Running max of per-edge offset-corrected shape error (localShape proxy). */
-  shapeMax: number[];
+  /**
+   * Length-weighted sum of squared per-edge offset-corrected shape error;
+   * sqrt(shapeSq / dist) is the beam's proxy for the final localShape RMS.
+   */
+  shapeSq: number[];
   turns: number[];
   exitHead: number[];
   parent: number[];
@@ -197,7 +200,7 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     // which time the whole beam was lapping. Ground covered says it early.
     weights.confinement * confinementFraction(s.reach[i]!, d) +
     weights.turns * turnErr +
-    weights.localShape * s.shapeMax[i]!
+    weights.localShape * Math.sqrt(s.shapeSq[i]! / d)
   );
 }
 
@@ -320,7 +323,7 @@ export async function beamSearch(
     reach: roots.map(() => 0),
     root: [...roots],
     viaMask: roots.map(() => 0),
-    shapeMax: roots.map(() => 0),
+    shapeSq: roots.map(() => 0),
     turns: roots.map(() => 0),
     exitHead: roots.map(() => Number.NaN),
     parent: roots.map(() => -1),
@@ -344,7 +347,8 @@ export async function beamSearch(
       const n = Math.max(1, s.sampleCount[stateIdx]!);
       const mean = s.diffSum[stateIdx]! / n;
       const rmse = Math.sqrt(Math.max(0, s.sq[stateIdx]! / n - mean * mean));
-      const bound = weights.rmse * rmse + weights.localShape * s.shapeMax[stateIdx]! - 3;
+      const shape = Math.sqrt(s.shapeSq[stateIdx]! / Math.max(1, s.dist[stateIdx]!));
+      const bound = weights.rmse * rmse + weights.localShape * shape - 3;
       if (bound > best[best.length - 1]!.score) return;
     }
     const path = reconstruct(s, stateIdx);
@@ -489,7 +493,7 @@ export async function beamSearch(
         // proxy for the final localShape window term.
         const mean = diffSum / (m - 1);
         const edgeShape = Math.sqrt(Math.max(0, diffSq / (m - 1) - mean * mean));
-        const shapeMax = Math.max(s.shapeMax[si]!, edgeShape);
+        const shapeSq = s.shapeSq[si]! + edgeShape * edgeShape * e.lengthM;
 
         const reuse = recentReuse(s, si, ei, forward ? 1 : 0);
         const repeat = reuse === 0 ? 0 : reuse === 1 ? e.lengthM : 2 * e.lengthM;
@@ -522,7 +526,7 @@ export async function beamSearch(
         s.reach.push(Math.max(s.reach[si]!, Math.sqrt(dx * dx + dy * dy)));
         s.root.push(rootIdx);
         s.viaMask.push(viaMask);
-        s.shapeMax.push(shapeMax);
+        s.shapeSq.push(shapeSq);
         s.turns.push(turns);
         s.exitHead.push(exitHeading(e, forward));
         s.parent.push(si);

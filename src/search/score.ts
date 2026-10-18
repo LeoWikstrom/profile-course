@@ -36,9 +36,11 @@ export interface Weights {
   /** Per signalized crossing per km (0 = ignore traffic lights). */
   trafficLights: number;
   /**
-   * Worst local shape mismatch: max over 500 m windows of offset-corrected
-   * RMSE. Catches a spike where the target is flat, which global RMSE and
-   * the gain/loss term happily trade away.
+   * Local shape mismatch: RMS over 500 m windows of offset-corrected RMSE.
+   * Catches a spike where the target is flat, and a sawtooth standing in for
+   * one long climb — both of which global RMSE, the gain/loss term and the
+   * gradient histogram happily trade away, the histogram because eight 4 %
+   * bumps and one 4 % climb are the same distribution.
    */
   localShape: number;
 }
@@ -60,7 +62,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   turns: 2,
   denseTurns: 2,
   trafficLights: 0,
-  localShape: 6,
+  localShape: 9,
 };
 
 export const OSCILLATION_WINDOW_M = 1000;
@@ -322,15 +324,23 @@ const SHAPE_WINDOW_SAMPLES = 20; // 500 m at 25 m spacing
 const SHAPE_SHIFT_SAMPLES = 6; // tolerate ±150 m longitudinal misalignment
 
 /**
- * Max over sliding windows of the offset-corrected RMSE, where each window may
- * shift up to ±150 m along the target. A real climb that sits slightly
- * earlier/later than in the race (e.g. a modelled bridge ramp) aligns at some
- * shift; a spike where the target is flat stays bad at every shift.
+ * How unlike the race the course is stretch by stretch: the RMS over sliding
+ * windows of the offset-corrected RMSE, where each window may shift up to
+ * ±150 m along the target. A real climb sitting slightly earlier or later than
+ * in the race aligns at some shift; a spike where the target is flat stays bad
+ * at every shift.
+ *
+ * RMS, not the worst window: with a max, a course that has already ruined one
+ * stretch gets every other stretch for free, which is how a course could trade
+ * the race's one long climb for a sawtooth of small hills the whole way round
+ * and pay only once. Squaring still lets a single awful window dominate a
+ * course that is merely approximate throughout.
  */
-export function worstWindowShapeError(course: Float32Array, target: Float32Array): number {
+export function windowShapeError(course: Float32Array, target: Float32Array): number {
   const n = Math.min(course.length, target.length);
   if (n < SHAPE_WINDOW_SAMPLES) return 0;
-  let worst = 0;
+  let sumSq = 0;
+  let windows = 0;
   for (let start = 0; start + SHAPE_WINDOW_SAMPLES <= n; start += SHAPE_WINDOW_SAMPLES / 2) {
     let best = Infinity;
     for (let shift = -SHAPE_SHIFT_SAMPLES; shift <= SHAPE_SHIFT_SAMPLES; shift++) {
@@ -349,9 +359,11 @@ export function worstWindowShapeError(course: Float32Array, target: Float32Array
       const rmse = Math.sqrt(sq / SHAPE_WINDOW_SAMPLES);
       if (rmse < best) best = rmse;
     }
-    if (best !== Infinity && best > worst) worst = best;
+    if (best === Infinity) continue;
+    sumSq += best * best;
+    windows++;
   }
-  return worst;
+  return windows > 0 ? Math.sqrt(sumSq / windows) : 0;
 }
 
 /** Per-term contributions; scoreCourse is their sum. */
@@ -394,7 +406,7 @@ export function scoreBreakdown(
     turns: weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm),
     'dense turns': weights.denseTurns * course.denseTurnsPerKm,
     'traffic lights': weights.trafficLights * course.signalsPerKm,
-    'local shape': weights.localShape * worstWindowShapeError(course.samples, target.samples),
+    'local shape': weights.localShape * windowShapeError(course.samples, target.samples),
   };
 }
 

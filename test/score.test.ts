@@ -102,27 +102,47 @@ describe('scoreCourse', () => {
   });
 });
 
-describe('worstWindowShapeError', () => {
+describe('windowShapeError', () => {
   it('is 0 for identical profiles and insensitive to a constant offset', async () => {
-    const { worstWindowShapeError } = await import('../src/search/score');
+    const { windowShapeError } = await import('../src/search/score');
     const tri = triangle(801, 100);
-    expect(worstWindowShapeError(tri, tri)).toBe(0);
+    expect(windowShapeError(tri, tri)).toBe(0);
     const offset = new Float32Array(801);
     for (let i = 0; i < 801; i++) offset[i] = tri[i]! + 15;
-    expect(worstWindowShapeError(offset, tri)).toBeLessThan(0.01);
+    expect(windowShapeError(offset, tri)).toBeLessThan(0.01);
   });
 
   it('catches a short spike against a flat target', async () => {
-    const { worstWindowShapeError } = await import('../src/search/score');
+    const { windowShapeError } = await import('../src/search/score');
     const flat = new Float32Array(801);
     const spiky = new Float32Array(801);
     for (let i = 450; i < 460; i++) spiky[i] = 20; // ~250 m spike of 20 m
-    const err = worstWindowShapeError(spiky, flat);
-    expect(err).toBeGreaterThan(5);
     // The same gain spread over the whole course is a far smaller local error.
     const gentle = new Float32Array(801);
     for (let i = 0; i < 801; i++) gentle[i] = (i / 800) * 20;
-    expect(worstWindowShapeError(gentle, flat)).toBeLessThan(1);
+    expect(windowShapeError(spiky, flat)).toBeGreaterThan(5 * windowShapeError(gentle, flat));
+  });
+
+  it('charges a sawtooth for every bump, not just its worst one', async () => {
+    const { windowShapeError } = await import('../src/search/score');
+    // The race: one steady 100 m climb over 20 km.
+    const climb = triangle(801, 0);
+    for (let i = 0; i < 801; i++) climb[i] = (i / 800) * 100;
+
+    // Same start, same finish, same total gain — but taken as 20 bumps.
+    const sawtooth = new Float32Array(801);
+    for (let i = 0; i < 801; i++) {
+      sawtooth[i] = climb[i]! + 12 * Math.sin((i / 800) * 20 * 2 * Math.PI);
+    }
+    // The same wobble in one place only, which a worst-window term would have
+    // scored identically — that is the behaviour this term exists to fix.
+    const oneBump = new Float32Array(climb);
+    for (let i = 380; i < 420; i++) {
+      oneBump[i] = climb[i]! + 12 * Math.sin(((i - 380) / 40) * 2 * Math.PI);
+    }
+    expect(windowShapeError(sawtooth, climb)).toBeGreaterThan(
+      3 * windowShapeError(oneBump, climb),
+    );
   });
 });
 

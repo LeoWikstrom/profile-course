@@ -56,6 +56,16 @@ and counts as repeated ground. Without that, a course could re-climb the same hi
 manufacture the target's total gain instead of matching its features, which Leo wants always
 discouraged.
 
+The local-shape term is the RMS over 500 m windows of offset-corrected RMSE, not the worst
+window. With a max, a course that had already ruined one stretch got every other stretch free,
+so it could swap the race's one long climb for a sawtooth of small hills the whole way round and
+pay only once — and the gradient histogram cannot object, because eight 4 % bumps and one 4 %
+climb are the same distribution. Squaring still lets one awful window dominate a course that is
+merely approximate throughout. Weight 9 (was 6, which the RMS aggregate would have softened by
+about a quarter): Leo wants local similarity to outrank matching the totals, accepting that
+where the terrain has no matching climb the course now under-delivers the race's gain rather
+than faking it.
+
 - Phase 2 baseline: 2 000 seeded random walks, keep best 20, local improvement.
 - Phase 3: beam search over `(node, 100 m bucket)` states, B = 200/bucket, Dijkstra pruning on
   reachability, k-shortest-paths window replacement (300–1 500 m, k = 5, two passes).
