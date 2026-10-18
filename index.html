@@ -18,6 +18,9 @@
       <button id="edit-nodes" aria-pressed="false"
         title="Node editing: pull a dot to move it, tap a dot to delete it, tap elsewhere to add one">Nodes</button>
     </div>
+    <div id="via-bar" hidden>
+      <button id="via-cancel" title="Stop placing a via point" aria-label="Stop placing a via point">✕</button>
+    </div>
     <p id="edit-status" hidden></p>
     <div id="sheet">
       <div id="sheet-top">
@@ -81,7 +84,7 @@
               style="width: 60px" /> km
           </span>
           <ul id="via-list" class="hint"></ul>
-          <button id="add-via" disabled>Add via point (then tap the map)</button>
+          <button id="add-via" disabled>Add via point</button>
         </div>
         <details id="areas-panel">
           <summary class="hint">Offline areas</summary>

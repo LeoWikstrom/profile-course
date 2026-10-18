@@ -93,6 +93,7 @@ const downloadAreaButton = document.getElementById('download-area') as HTMLButto
 const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
 const areasList = document.getElementById('areas-list') as HTMLUListElement;
 const rangeLabel = document.getElementById('range-label') as HTMLOutputElement;
+const beamWidthInput = document.getElementById('beam-width') as HTMLInputElement;
 
 let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
@@ -180,6 +181,7 @@ function persistSession(): void {
       surface: surfaceSelect.value,
       returnToStart: returnToggle.checked,
       startAnywhere: startAnywhereToggle.checked,
+      beamWidth: Number(beamWidthInput.value) || 200,
       viaPoints,
       seed,
     },
@@ -216,7 +218,17 @@ function showResult(
       },
     },
     { editing: editingMode, toggle: () => toggleEditing(result) },
+    courseName(),
   );
+}
+
+/**
+ * What to call the shown course: the race it was modelled on, plus which
+ * course of the search it is, so a folder of downloads stays sortable.
+ */
+function courseName(): string {
+  const base = (gpxLabel ?? 'Profile course').replace(/\.gpx$/i, '').trim() || 'Profile course';
+  return shownCandidate === 0 ? `${base} model` : `${base} alt ${shownCandidate + 1}`;
 }
 
 /** Editing feedback also goes over the map, since the sheet may be collapsed. */
@@ -638,7 +650,7 @@ function startSearch(): void {
     startAtPoint: !startAnywhereToggle.checked || returnToggle.checked,
     weights: collectWeights(),
     connectors: connectorsToggle.checked,
-    beamWidth: Number((document.getElementById('beam-width') as HTMLInputElement).value) || 200,
+    beamWidth: Number(beamWidthInput.value) || 200,
     viaPoints,
     viaToleranceKm:
       Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 1,
@@ -884,6 +896,8 @@ rangeTo.addEventListener('input', () => {
 const compareInput = document.getElementById('compare-input') as HTMLInputElement;
 const viaList = document.getElementById('via-list') as HTMLUListElement;
 const addViaButton = document.getElementById('add-via') as HTMLButtonElement;
+const viaBar = document.getElementById('via-bar') as HTMLDivElement;
+const viaCancelButton = document.getElementById('via-cancel') as HTMLButtonElement;
 
 let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
 
@@ -974,17 +988,32 @@ function renderVias(anchor?: object): void {
   addViaButton.disabled = false;
 }
 
+/** Leave via placement, whether a point was placed or the ✕ was tapped. */
+function endViaPlacement(): void {
+  addViaButton.textContent = 'Add via point';
+  viaBar.hidden = true;
+  sheet.restore();
+}
+
 addViaButton.addEventListener('click', () => {
   addViaButton.textContent = 'Tap the map to place the via point…';
   startHint.textContent = 'Tap the map to place the via point…';
   sheet.collapse(); // get the menu out of the way of the map
+  // The sheet is out of the way, so the only way back is over the map.
+  viaBar.hidden = false;
+  slideIn(viaBar);
   map.armViaPlacement((p) => {
     viaPoints.push({ lat: p.lat, lon: p.lon, km: null });
-    addViaButton.textContent = 'Add via point (then tap the map)';
+    endViaPlacement();
     renderVias();
     persistSession();
-    sheet.restore();
   });
+});
+
+viaCancelButton.addEventListener('click', () => {
+  map.disarmViaPlacement();
+  endViaPlacement();
+  startHint.textContent = 'Via point not placed.';
 });
 
 function targetTransfer(profile: TargetProfile) {
@@ -1108,6 +1137,8 @@ findButton.addEventListener('click', () => {
   startSearch();
 });
 
+beamWidthInput.addEventListener('change', persistSession);
+
 coordSet.addEventListener('click', () => {
   const lat = Number(coordLat.value);
   const lon = Number(coordLon.value);
@@ -1128,6 +1159,7 @@ async function boot(): Promise<void> {
     if (session.settings.surface) surfaceSelect.value = session.settings.surface;
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
+    if (session.settings.beamWidth) beamWidthInput.value = String(session.settings.beamWidth);
     viaPoints = session.settings.viaPoints ?? [];
     renderVias();
     if (session.profile) setFullProfile(session.profile);

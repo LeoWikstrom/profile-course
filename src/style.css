@@ -180,7 +180,8 @@ button:not(:disabled) {
   color: white;
 }
 
-#edit-bar {
+#edit-bar,
+#via-bar {
   position: fixed;
   top: 8px;
   left: 8px;
@@ -191,6 +192,7 @@ button:not(:disabled) {
 
 /* `display: flex` would otherwise beat the hidden attribute's display: none. */
 #edit-bar[hidden],
+#via-bar[hidden],
 #edit-status[hidden] {
   display: none;
 }
@@ -211,7 +213,8 @@ button:not(:disabled) {
   animation: fade-in 0.2s ease-out;
 }
 
-#edit-bar > button {
+#edit-bar > button,
+#via-bar > button {
   width: auto;
   min-height: 40px;
   padding: 0 14px;

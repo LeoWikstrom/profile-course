@@ -65,6 +65,8 @@ export function renderResult(
   course: CourseResult,
   action: { label: string; onAction: () => void },
   onEdit?: { editing: boolean; toggle: () => void },
+  /** What to call the course in the GPX and in its download, e.g. "Vasaloppet alt 2". */
+  name = 'Profile course',
 ): void {
   const split = course.surfaceSplit
     .map((f, i) => (f > 0.005 ? `${Math.round(f * 100)} % ${SURFACE_NAMES[i]}` : null))
@@ -90,14 +92,16 @@ export function renderResult(
   els.downloadButton.hidden = false;
   els.downloadButton.onclick = () => {
     const gpx = buildGpx(
-      `Profile course ${(course.lengthM / 1000).toFixed(1)} km`,
+      `${name} ${(course.lengthM / 1000).toFixed(1)} km`,
       `Match score ${course.score.toFixed(2)} (seed ${course.seed})`,
       course.exportPoints,
     );
     const url = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'profile-course.gpx';
+    // Watches and route sites key off the file name, so a folder full of
+    // alternatives has to say which race and which alternative each one is.
+    a.download = `${name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'course'}.gpx`;
     a.click();
     URL.revokeObjectURL(url);
   };
