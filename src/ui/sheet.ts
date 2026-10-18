@@ -79,15 +79,23 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
     if (Math.abs(offsetFor(level) - applied) > 1) setLevel(level);
   }).observe(sheet);
 
-  function nearestLevel(offset: number, max: number): SheetLevel {
-    let best: SheetLevel = 'full';
-    let bestD = Infinity;
-    for (const l of ['tall', 'full', 'middle', 'collapsed'] as const) {
-      const d = Math.abs(offset - offsetFor(l, max));
-      if (d < bestD) {
-        bestD = d;
-        best = l;
-      }
+  /**
+   * The stops from highest to lowest, dropping any that lands where the one
+   * before it already sits (a short sheet has nothing to show at `tall`).
+   */
+  function stops(max: number): { level: SheetLevel; offset: number }[] {
+    const out: { level: SheetLevel; offset: number }[] = [];
+    for (const level of ['tall', 'full', 'middle', 'collapsed'] as const) {
+      const offset = offsetFor(level, max);
+      if (out.length === 0 || offset - out[out.length - 1]!.offset > 8) out.push({ level, offset });
+    }
+    return out;
+  }
+
+  function nearestStop(list: { offset: number }[], offset: number): number {
+    let best = 0;
+    for (let i = 1; i < list.length; i++) {
+      if (Math.abs(offset - list[i]!.offset) < Math.abs(offset - list[best]!.offset)) best = i;
     }
     return best;
   }
@@ -120,10 +128,16 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
     const dy = e.clientY - startY;
     if (Math.abs(dy) < TAP_THRESHOLD_PX) {
       setLevel(level === 'collapsed' ? lastOpen : 'collapsed');
-    } else {
-      const max = maxOffset();
-      setLevel(nearestLevel(Math.min(max, Math.max(0, startOffset + dy)), max));
+      return;
     }
+    const max = maxOffset();
+    const list = stops(max);
+    const from = nearestStop(list, startOffset);
+    let to = nearestStop(list, Math.min(max, Math.max(0, startOffset + dy)));
+    // However short the flick, it moves at least one stop the way it went.
+    if (dy > 0) to = Math.max(to, Math.min(from + 1, list.length - 1));
+    else to = Math.min(to, Math.max(from - 1, 0));
+    setLevel(list[to]!.level);
   };
   handle.addEventListener('pointerup', finish);
   handle.addEventListener('pointercancel', finish);
