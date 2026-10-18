@@ -1,8 +1,7 @@
 const HANDLE_VISIBLE_PX = 30;
 const TAP_THRESHOLD_PX = 8;
-/** Fraction of the sheet left showing at the middle stop. */
-const MIDDLE_FRACTION = 0.45;
-/** Fraction of the screen the sheet covers at its usual open stop. */
+/** Fraction of the screen each open stop covers, whatever the sheet holds. */
+const MIDDLE_FRACTION = 0.25;
 const FULL_FRACTION = 0.55;
 
 /** `tall` covers the screen; `full` is the usual half-screen panel. */
@@ -49,15 +48,13 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
   const maxOffset = () => naturalHeight() - HANDLE_VISIBLE_PX;
 
   function offsetFor(l: SheetLevel, max = maxOffset()): number {
-    // The sheet box may be taller than the usual stop, so `full` pushes the
-    // surplus below the screen edge and `tall` brings all of it up.
+    // The sheet box may be taller than a stop allows, so the surplus is pushed
+    // below the screen edge; `tall` brings all of it up.
     if (l === 'tall') return 0;
     if (l === 'collapsed') return max;
-    if (l === 'full') {
-      const surplus = max + HANDLE_VISIBLE_PX - window.innerHeight * FULL_FRACTION;
-      return Math.min(max, Math.max(0, surplus));
-    }
-    return max * (1 - MIDDLE_FRACTION);
+    const fraction = l === 'full' ? FULL_FRACTION : MIDDLE_FRACTION;
+    const surplus = max + HANDLE_VISIBLE_PX - window.innerHeight * fraction;
+    return Math.min(max, Math.max(0, surplus));
   }
 
   function apply(offset: number, animate: boolean): void {
