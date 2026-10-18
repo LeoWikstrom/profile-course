@@ -2,8 +2,11 @@ const HANDLE_VISIBLE_PX = 30;
 const TAP_THRESHOLD_PX = 8;
 /** Fraction of the sheet left showing at the middle stop. */
 const MIDDLE_FRACTION = 0.45;
+/** Fraction of the screen the sheet covers at its usual open stop. */
+const FULL_FRACTION = 0.55;
 
-export type SheetLevel = 'collapsed' | 'middle' | 'full';
+/** `tall` covers the screen; `full` is the usual half-screen panel. */
+export type SheetLevel = 'collapsed' | 'middle' | 'full' | 'tall';
 
 export interface SheetController {
   level(): SheetLevel;
@@ -46,8 +49,14 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
   const maxOffset = () => naturalHeight() - HANDLE_VISIBLE_PX;
 
   function offsetFor(l: SheetLevel, max = maxOffset()): number {
-    if (l === 'full') return 0;
+    // The sheet box may be taller than the usual stop, so `full` pushes the
+    // surplus below the screen edge and `tall` brings all of it up.
+    if (l === 'tall') return 0;
     if (l === 'collapsed') return max;
+    if (l === 'full') {
+      const surplus = max + HANDLE_VISIBLE_PX - window.innerHeight * FULL_FRACTION;
+      return Math.min(max, Math.max(0, surplus));
+    }
     return max * (1 - MIDDLE_FRACTION);
   }
 
@@ -56,18 +65,27 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
     sheet.style.transform = offset > 0 ? `translateY(${offset}px)` : '';
   }
 
+  let applied = -1;
+
   function setLevel(l: SheetLevel): void {
     level = l;
     if (l !== 'collapsed') lastOpen = l;
     const offset = offsetFor(l);
+    applied = offset;
     spacer.style.height = `${Math.round(offset)}px`;
     apply(offset, true);
   }
 
+  // Results and panels change the sheet's height, which moves every stop.
+  new ResizeObserver(() => {
+    if (isWide() || dragging) return;
+    if (Math.abs(offsetFor(level) - applied) > 1) setLevel(level);
+  }).observe(sheet);
+
   function nearestLevel(offset: number, max: number): SheetLevel {
     let best: SheetLevel = 'full';
     let bestD = Infinity;
-    for (const l of ['full', 'middle', 'collapsed'] as const) {
+    for (const l of ['tall', 'full', 'middle', 'collapsed'] as const) {
       const d = Math.abs(offset - offsetFor(l, max));
       if (d < bestD) {
         bestD = d;
@@ -96,7 +114,7 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
   // Rotating the phone changes every stop's offset.
   window.addEventListener('resize', () => {
     if (isWide()) spacer.style.height = '0px';
-    else if (level !== 'full') setLevel(level);
+    else setLevel(level);
   });
 
   const finish = (e: PointerEvent) => {
@@ -112,6 +130,8 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
   };
   handle.addEventListener('pointerup', finish);
   handle.addEventListener('pointercancel', finish);
+
+  if (!isWide()) setLevel('full');
 
   return {
     level: () => level,

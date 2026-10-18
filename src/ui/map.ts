@@ -49,6 +49,12 @@ export interface MapController {
       onGrab?: (index: number) => void;
       /** The fixed points the pulled stretch stays attached to, for the drag preview. */
       anchors?: (index: number) => readonly [LatLon, LatLon] | null;
+      /** A pull may also start between the grab points, anywhere along this line. */
+      line?: {
+        points: LatLon[];
+        onPull: (index: number, to: LatLon, dragged: boolean) => void;
+        anchors?: (index: number) => readonly [LatLon, LatLon] | null;
+      };
     },
   ): void;
   disarmCourseDrag(): void;
@@ -125,20 +131,27 @@ export function createMap(container: string): MapController {
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
   let grabCb: ((index: number) => void) | null = null;
   let anchorsCb: ((index: number) => readonly [LatLon, LatLon] | null) | null = null;
+  let lineGrab: {
+    points: LatLon[];
+    onPull: (index: number, to: LatLon, dragged: boolean) => void;
+    anchors?: (index: number) => readonly [LatLon, LatLon] | null;
+  } | null = null;
   let windowBox: L.Rectangle | null = null;
   let pullPoints: LatLon[] = [];
   let pullIndex = -1;
+  /** The pull started between the grab points, on the course line itself. */
+  let pullOnLine = false;
   let pullStart: { x: number; y: number } | null = null;
   let pullAnchors: readonly [LatLon, LatLon] | null = null;
   let rubber: L.Polyline | null = null;
   let rubberPoint: L.Marker | null = null;
 
-  function nearestCoursePoint(e: PointerEvent): number {
+  function nearestCoursePoint(e: PointerEvent, points: LatLon[]): number {
     const p = map.mouseEventToContainerPoint(e);
     let best = -1;
     let bestD = GRAB_RADIUS_PX;
-    for (let i = 0; i < pullPoints.length; i++) {
-      const q = map.latLngToContainerPoint([pullPoints[i]!.lat, pullPoints[i]!.lon]);
+    for (let i = 0; i < points.length; i++) {
+      const q = map.latLngToContainerPoint([points[i]!.lat, points[i]!.lon]);
       const d = Math.hypot(q.x - p.x, q.y - p.y);
       if (d < bestD) {
         bestD = d;
@@ -152,19 +165,22 @@ export function createMap(container: string): MapController {
 
   mapEl.addEventListener('pointerdown', (e) => {
     if (!pullCb || pullStart) return;
-    const i = nearestCoursePoint(e);
+    let i = nearestCoursePoint(e, pullPoints);
+    // Between the grab points, the course line itself can be pulled out.
+    pullOnLine = i < 0 && lineGrab !== null;
+    if (pullOnLine) i = nearestCoursePoint(e, lineGrab!.points);
     if (i < 0) return; // away from the course: let the map pan as usual
     pullIndex = i;
     pullStart = { x: e.clientX, y: e.clientY };
-    pullAnchors = anchorsCb?.(i) ?? null;
+    pullAnchors = (pullOnLine ? lineGrab!.anchors?.(i) : anchorsCb?.(i)) ?? null;
     map.dragging.disable();
     mapEl.setPointerCapture(e.pointerId);
-    grabCb?.(i);
+    if (!pullOnLine) grabCb?.(i);
   });
 
   mapEl.addEventListener('pointermove', (e) => {
     if (!pullStart) return;
-    const from = pullPoints[pullIndex]!;
+    const from = (pullOnLine ? lineGrab!.points : pullPoints)[pullIndex]!;
     const to = map.mouseEventToLatLng(e);
     // Straight legs from the two points the stretch stays attached to, so it is
     // obvious which part of the course the drag can still move.
@@ -195,8 +211,10 @@ export function createMap(container: string): MapController {
     if (!pullStart) return;
     const moved = Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y);
     const index = pullIndex;
+    const onLine = pullOnLine;
     pullStart = null;
     pullIndex = -1;
+    pullOnLine = false;
     pullAnchors = null;
     rubber?.remove();
     rubber = null;
@@ -206,7 +224,9 @@ export function createMap(container: string): MapController {
     if (!commit) return;
     lastDragEnd = Date.now();
     const to = map.mouseEventToLatLng(e);
-    pullCb?.(index, { lat: to.lat, lon: to.lng }, moved >= DRAG_THRESHOLD_PX);
+    const dragged = moved >= DRAG_THRESHOLD_PX;
+    if (onLine) lineGrab?.onPull(index, { lat: to.lat, lon: to.lng }, dragged);
+    else pullCb?.(index, { lat: to.lat, lon: to.lng }, dragged);
   };
   mapEl.addEventListener('pointerup', (e) => endPull(e, true));
   mapEl.addEventListener('pointercancel', (e) => endPull(e, false));
@@ -261,11 +281,13 @@ export function createMap(container: string): MapController {
       pullCb = handlers.onPull;
       grabCb = handlers.onGrab ?? null;
       anchorsCb = handlers.anchors ?? null;
+      lineGrab = handlers.line ?? null;
     },
     disarmCourseDrag() {
       pullCb = null;
       grabCb = null;
       anchorsCb = null;
+      lineGrab = null;
       pullPoints = [];
     },
     showEditWindow(points) {

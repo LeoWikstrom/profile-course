@@ -13,10 +13,8 @@ import SearchWorker from './search/worker?worker';
 
 const map = createMap('map');
 const worker = new SearchWorker();
-const sheet = initSheet(
-  document.getElementById('sheet') as HTMLElement,
-  document.getElementById('sheet-handle') as HTMLElement,
-);
+const sheetEl = document.getElementById('sheet') as HTMLElement;
+const sheet = initSheet(sheetEl, document.getElementById('sheet-handle') as HTMLElement);
 
 function send(msg: MainToWorker): void {
   worker.postMessage(msg);
@@ -386,9 +384,15 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   const kmAt = (index: number) => nodes?.[index]?.km ?? cum[index]! / 1000;
   setEditStatus(
     nodeMode
-      ? 'Nodes: pull a dot to move it, tap a dot to delete it, tap elsewhere to add one.'
+      ? 'Nodes: pull a dot to move it, pull between dots to add one, tap a dot to delete it.'
       : 'Editing: pull the course where you want it, or tap a point on it.',
   );
+  /** The leg of the course a distance falls on, as an index into `nodes`. */
+  const legAt = (km: number): number => {
+    let leg = 0;
+    for (let i = 0; nodes && i < nodes.length - 1; i++) if (nodes[i]!.km <= km) leg = i;
+    return leg;
+  };
   drawEditMarkers();
   map.setNodeMarkers(nodes ?? []);
   map.hideEditWindow();
@@ -425,6 +429,27 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
       const last = stretch[stretch.length - 1];
       return first && last ? ([first, last] as const) : null;
     },
+    // In node mode the course between two dots behaves like a node waiting to
+    // be born: pull it out and it becomes one, on that leg.
+    ...(nodes
+      ? {
+          line: {
+            points,
+            onPull: (index: number, to: { lat: number; lon: number }, dragged: boolean) => {
+              if (!dragged) {
+                setEditStatus('Pull the course out to add a point, or tap a dot to delete it.');
+                return;
+              }
+              const leg = legAt(cum[index]! / 1000);
+              sendNodeEdit(result, 'add', (nodes[leg]!.km + nodes[leg + 1]!.km) / 2, to);
+            },
+            anchors: (index: number) => {
+              const leg = legAt(cum[index]! / 1000);
+              return [nodes[leg]!, nodes[leg + 1]!] as const;
+            },
+          },
+        }
+      : {}),
   });
   const onTap = (p: { lat: number; lon: number }): void => {
     // Away from any dot, a tap in node mode adds a point on the nearest leg.
@@ -758,7 +783,19 @@ let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
 /** Row element per via, by identity, so reordering can be animated. */
 let viaRows = new Map<object, HTMLElement>();
 
-function renderVias(): void {
+/** The course passes the vias in km order; the ones without a km come last. */
+function sortVias(): void {
+  const key = (v: { km: number | null }) => (v.km === null ? Infinity : v.km);
+  viaPoints.sort((a, b) => (key(a) === key(b) ? 0 : key(a) < key(b) ? -1 : 1));
+}
+
+/**
+ * Rebuild the via list. `anchor` is the via the user is working on: the sheet
+ * scrolls with it so that row stays put on screen while the others reorder.
+ */
+function renderVias(anchor?: object): void {
+  sortVias();
+  const anchorWas = anchor && viaRows.get(anchor)?.getBoundingClientRect().top;
   map.setViaMarkers(viaPoints, (i, p) => {
     viaPoints[i] = { ...viaPoints[i]!, lat: p.lat, lon: p.lon };
     renderVias();
@@ -778,7 +815,8 @@ function renderVias(): void {
     km.style.width = '70px';
     if (v.km !== null) km.value = String(v.km);
     km.addEventListener('change', () => {
-      viaPoints[i]!.km = km.value === '' ? null : Math.max(0, Number(km.value));
+      v.km = km.value === '' ? null : Math.max(0, Number(km.value));
+      renderVias(v);
       persistSession();
     });
     li.appendChild(km);
@@ -797,29 +835,15 @@ function renderVias(): void {
         targetChart.removeEventListener('pointerup', commit, true);
         targetChart.removeEventListener('pointercancel', commit, true);
         if (lastChartKm === null) return;
-        viaPoints[i]!.km = Math.round(lastChartKm * 10) / 10;
-        startHint.textContent = `Via ${i + 1} set to km ${viaPoints[i]!.km}`;
-        renderVias();
+        v.km = Math.round(lastChartKm * 10) / 10;
+        startHint.textContent = `Via point set to km ${v.km}`;
+        renderVias(v);
         persistSession();
       };
       targetChart.addEventListener('pointerup', commit, true);
       targetChart.addEventListener('pointercancel', commit, true);
     });
     li.appendChild(pick);
-    if (i > 0) {
-      const up = document.createElement('button');
-      up.textContent = '↑';
-      up.title = 'Move earlier in the order';
-      up.style.width = 'auto';
-      up.style.minHeight = '28px';
-      up.style.marginLeft = '8px';
-      up.addEventListener('click', () => {
-        [viaPoints[i - 1], viaPoints[i]] = [viaPoints[i]!, viaPoints[i - 1]!];
-        renderVias();
-        persistSession();
-      });
-      li.appendChild(up);
-    }
     const del = document.createElement('button');
     del.textContent = '×';
     del.style.width = 'auto';
@@ -834,6 +858,11 @@ function renderVias(): void {
     viaList.appendChild(li);
     viaRows.set(v, li);
   });
+  if (anchor !== undefined && anchorWas !== undefined) {
+    const row = viaRows.get(anchor);
+    const dy = row ? row.getBoundingClientRect().top - anchorWas : 0;
+    if (Math.abs(dy) >= 1) sheetEl.scrollTop += dy;
+  }
   playReorder(wasAt, viaRows);
   addViaButton.disabled = false;
 }

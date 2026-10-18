@@ -49,6 +49,10 @@ Score (lower = better) on 25 m samples:
 - Budget: graph build ≤ 2 s, search ≤ 8 s on a mid-range phone (R = 5 km, 21 km target).
   If over: halve B, double bucket size.
 
+The bottom sheet has four stops — collapsed, middle, full (≈55 % of the screen, the default) and
+tall (nearly the whole screen). The box itself is up to 94 vh; a stop pushes the surplus below the
+screen edge, and a spacer inside gives the hidden part room to scroll.
+
 ## Conventions
 
 - Heavy loops use typed arrays and plain `for` loops; no per-step allocation in the beam search.
@@ -86,7 +90,9 @@ Score (lower = better) on 25 m samples:
       by Leo.
 - [x] **Via points**: must-pass markers (optional km each, adjustable ± window, pick-on-chart),
       enforced as a visit-order bitmask in the beam with reachability pruning; improve pass
-      cannot remove a via. Resolution is point-to-segment, 25 m radius.
+      cannot remove a via. Resolution is point-to-segment, 25 m radius. The list orders itself by
+      km (no km = last); editing one km re-sorts the list around that row, which is held still by
+      scrolling the sheet to match.
 - [x] **Comparison GPX**: upload an own course, map-matched (connectors on, skip-ahead over
       gaps), scored like a generated course, with an Improve button.
 - [x] **Editing mode**: persistent — pull the course where you want it, or tap a point then its
@@ -100,8 +106,10 @@ Score (lower = better) on 25 m samples:
       result on release. A translucent box can also outline the window (off by default).
       **Node submode**
       ("Nodes" in the edit bar) treats course nodes as waypoints, ignoring the score entirely:
-      every junction is drawn as a dot, a pull moves that node, a tap on a dot deletes it, and a
-      tap away from the dots adds a node on the leg whose geometry passes nearest the tap.
+      every junction is drawn as a dot, a pull moves that node, a tap on a dot deletes it, a pull
+      on the course *between* two dots adds a node on that leg (the rubber band hangs from the
+      two dots either side), and a tap away from the course adds one on the leg whose geometry
+      passes nearest the tap.
       Reconnection is by shortest path *excluding the old node*, so the course visibly stops
       going there (falling back to routing through it only when that is the sole connection); an
       out-and-back spur drops both legs. Nothing outside the two touched legs ever moves, and the

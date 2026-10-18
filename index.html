@@ -82,17 +82,6 @@
           <ul id="via-list" class="hint"></ul>
           <button id="add-via" disabled>Add via point (then tap the map)</button>
         </div>
-        <div class="control">
-          <span>
-            Editing: reroute window ±
-            <input type="number" id="reroute-window" value="600" min="100" max="3000" step="100"
-              style="width: 80px" /> m of course replaced per edit
-          </span>
-          <label class="checkbox">
-            <input type="checkbox" id="show-edit-window" />
-            <span>Also outline the window as a box (the drag preview shows its ends anyway)</span>
-          </label>
-        </div>
         <details id="areas-panel">
           <summary class="hint">Offline areas</summary>
           <p class="hint">
@@ -157,6 +146,17 @@
               <input type="number" id="coord-lon" step="0.00001" placeholder="lon" aria-label="Longitude" />
             </div>
             <button id="coord-set" style="margin-top: 6px">Set marker</button>
+          </div>
+          <div class="control">
+            <span>
+              Editing: reroute window ±
+              <input type="number" id="reroute-window" value="600" min="100" max="3000" step="100"
+                style="width: 80px" /> m of course replaced per edit
+            </span>
+            <label class="checkbox">
+              <input type="checkbox" id="show-edit-window" />
+              <span>Also outline the window as a box (the drag preview shows its ends anyway)</span>
+            </label>
           </div>
           <label class="control">
             <span>Algorithm</span>

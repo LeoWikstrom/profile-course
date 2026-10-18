@@ -25,7 +25,9 @@ body {
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -2px 12px rgb(0 0 0 / 0.25);
   padding: 4px 16px 16px;
-  max-height: 55vh;
+  /* The box reaches nearly the whole screen; the stops decide how much of it
+     is pushed below the edge, so the topmost stop can cover the map. */
+  max-height: 94vh;
   overflow-y: auto;
 }
 
