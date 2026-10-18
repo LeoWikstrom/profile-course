@@ -42,6 +42,13 @@ Score (lower = better) on 25 m samples:
 `S = w_e·RMSE + w_g·gain/loss error + w_h·EMD(gradient histograms) + w_s·surfaceMismatch
 + w_p·penalties + w_r·repeatFraction`, weights `1.0 / 20 / 10 / 15 / 30 / 10` (debug-tunable).
 
+Plus a confinement term: a course should reach at least 0.15 × its length away from its start
+(a plain loop manages 0.32). Laps spaced more than the 1 km oscillation window apart are free to
+the repeat term's eye and were invisible to the beam's partial rank entirely, which is how "the
+circles in the cemetery" kept coming back — a dense patch of paths can fake any distance and any
+profile. The beam now carries each state's reach from its own root and ranks on it, so laps lose
+while they are being built rather than after scoring, when the whole beam already laps.
+
 - Phase 2 baseline: 2 000 seeded random walks, keep best 20, local improvement.
 - Phase 3: beam search over `(node, 100 m bucket)` states, B = 200/bucket, Dijkstra pruning on
   reachability, k-shortest-paths window replacement (300–1 500 m, k = 5, two passes).

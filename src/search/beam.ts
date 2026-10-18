@@ -4,6 +4,7 @@ import { otherNode, type Graph } from '../graph/types';
 import { TURN_ANGLE_DEG, angleDiffDeg } from '../shared/geo';
 import {
   assembleCourse,
+  confinementFraction,
   entryHeading,
   exitHeading,
   scoreCourse,
@@ -59,6 +60,10 @@ interface StateStore {
   loss: number[];
   penaltyLen: number[];
   repeatLen: number[];
+  /** Farthest the path has been from its own root, metres (see confinement). */
+  reach: number[];
+  /** The start node this path grew from; roots differ when starting anywhere. */
+  root: number[];
   /** Bitmask of via points visited so far, in order. */
   viaMask: number[];
   /** Running max of per-edge offset-corrected shape error (localShape proxy). */
@@ -174,6 +179,10 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     // a fraction of the final weight: at full strength the term dominates the
     // partial rank in dense/small graphs and starves the beam of diversity.
     (weights.oscillation / 4) * (s.repeatLen[i]! / d) +
+    // Laps wider than that window are invisible to repeatLen, so the beam used
+    // to build them for free and only learn they were bad once scored — by
+    // which time the whole beam was lapping. Ground covered says it early.
+    weights.confinement * confinementFraction(s.reach[i]!, d) +
     weights.turns * turnErr +
     weights.localShape * s.shapeMax[i]!
   );
@@ -232,6 +241,7 @@ export async function beamSearch(
 
   const minLen = targetLengthM * (1 - lengthTolerance);
   const maxLen = targetLengthM * (1 + lengthTolerance);
+  const mPerLon = 111_320 * Math.cos((graph.nodeLat[startNode]! * Math.PI) / 180);
   const totalBuckets = Math.ceil(maxLen / bucketSizeM) + 1;
 
   let endMask: Uint8Array | null = null;
@@ -293,6 +303,8 @@ export async function beamSearch(
     loss: roots.map(() => 0),
     penaltyLen: roots.map(() => 0),
     repeatLen: roots.map(() => 0),
+    reach: roots.map(() => 0),
+    root: [...roots],
     viaMask: roots.map(() => 0),
     shapeMax: roots.map(() => 0),
     turns: roots.map(() => 0),
@@ -489,6 +501,11 @@ export async function beamSearch(
         s.loss.push(loss);
         s.penaltyLen.push(s.penaltyLen[si]! + e.penalty * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
+        const rootIdx = s.root[si]!;
+        const dy = (graph.nodeLat[nextNode]! - graph.nodeLat[rootIdx]!) * 111_320;
+        const dx = (graph.nodeLon[nextNode]! - graph.nodeLon[rootIdx]!) * mPerLon;
+        s.reach.push(Math.max(s.reach[si]!, Math.sqrt(dx * dx + dy * dy)));
+        s.root.push(rootIdx);
         s.viaMask.push(viaMask);
         s.shapeMax.push(shapeMax);
         s.turns.push(turns);

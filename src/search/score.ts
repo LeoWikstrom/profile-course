@@ -22,6 +22,13 @@ export interface Weights {
    * the target's gain is never what the runner wants.
    */
   oscillation: number;
+  /**
+   * Per unit of ground the course fails to cover (see `confinementFraction`).
+   * Laps far enough apart to escape the oscillation window are otherwise free,
+   * and a dense patch of paths — "the circles in the cemetery" — can fake any
+   * distance and any profile without the runner ever going anywhere.
+   */
+  confinement: number;
   /** Per |turns/km| difference from the target. */
   turns: number;
   /** Per dense turn (within 100 m of the previous turn) per km. */
@@ -49,6 +56,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   // edges at weight 10 and barely noticed; 30 makes improve unroll laps.
   repeat: 30,
   oscillation: 80,
+  confinement: 20,
   turns: 2,
   denseTurns: 2,
   trafficLights: 0,
@@ -56,6 +64,20 @@ export const DEFAULT_WEIGHTS: Weights = {
 };
 
 export const OSCILLATION_WINDOW_M = 1000;
+
+/**
+ * Ground a course is expected to cover: the farthest it gets from its start,
+ * per metre run. A plain loop manages 0.32 (L/π) and an out-and-back 0.5, so
+ * half of what even a wandering loop covers still leaves room to zigzag — it
+ * asks a half marathon for 3 km of elbow room, which laps never find.
+ */
+const MIN_REACH_RATIO = 0.15;
+
+/** 0 = covers enough ground, 1 = never leaves its own start. */
+export function confinementFraction(reachM: number, lengthM: number): number {
+  const want = lengthM * MIN_REACH_RATIO;
+  return want > 0 ? Math.max(0, 1 - reachM / want) : 0;
+}
 
 const DENSE_TURN_GAP_M = 100;
 
@@ -99,6 +121,8 @@ export interface AssembledCourse {
   penaltyFraction: number;
   repeatFraction: number;
   oscillationFraction: number;
+  /** The farthest the course gets from its start, in metres. */
+  reachM: number;
   turnsPerKm: number;
   denseTurnsPerKm: number;
   signalsPerKm: number;
@@ -118,6 +142,13 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   let penaltyLen = 0;
   let repeatLen = 0;
   let oscillationLen = 0;
+
+  const firstEdge = graph.edges[path.edges[0] ?? 0];
+  const root = firstEdge ? (path.dirs[0] === 1 ? firstEdge.a : firstEdge.b) : 0;
+  const lat0 = graph.nodeLat[root] ?? 0;
+  const lon0 = graph.nodeLon[root] ?? 0;
+  const mPerLon = 111_320 * Math.cos((lat0 * Math.PI) / 180);
+  let reachSq = 0;
   /** Edge index -> direction and course distance of the last traversal. */
   const used = new Map<number, { dir: number; endDist: number }>();
 
@@ -160,6 +191,11 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
     signalCount += e.signals;
+
+    const far = forward ? e.b : e.a;
+    const dy = (graph.nodeLat[far]! - lat0) * 111_320;
+    const dx = (graph.nodeLon[far]! - lon0) * mPerLon;
+    if (dx * dx + dy * dy > reachSq) reachSq = dx * dx + dy * dy;
 
     // Corridor check: reversing along a parallel twin path (bike + foot side
     // by side) is an out-and-back even though the edges differ. ~14 m cells
@@ -219,6 +255,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     penaltyFraction: lengthM > 0 ? penaltyLen / lengthM : 0,
     repeatFraction: lengthM > 0 ? repeatLen / lengthM : 0,
     oscillationFraction: lengthM > 0 ? oscillationLen / lengthM : 0,
+    reachM: Math.sqrt(reachSq),
     turnsPerKm: turnDists.length / km,
     denseTurnsPerKm: denseTurns / km,
     signalsPerKm: signalCount / km,
@@ -348,6 +385,7 @@ export function scoreBreakdown(
     safety: weights.penalty * course.penaltyFraction,
     repeats: weights.repeat * course.repeatFraction,
     'out-and-back': weights.oscillation * course.oscillationFraction,
+    'stays put': weights.confinement * confinementFraction(course.reachM, course.lengthM),
     turns: weights.turns * Math.abs(course.turnsPerKm - target.turnsPerKm),
     'dense turns': weights.denseTurns * course.denseTurnsPerKm,
     'traffic lights': weights.trafficLights * course.signalsPerKm,

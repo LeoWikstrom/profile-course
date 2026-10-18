@@ -72,7 +72,12 @@ function collectWeights(): Record<string, number> | null {
   // Dense turns and far repeats scale with their main sliders. Repeat tracks
   // oscillation at the default 30:80 ratio (laps were nearly free at 10).
   if (out['turns'] !== undefined) out['denseTurns'] = out['turns'];
-  if (out['oscillation'] !== undefined) out['repeat'] = (out['oscillation'] * 3) / 8;
+  if (out['oscillation'] !== undefined) {
+    out['repeat'] = (out['oscillation'] * 3) / 8;
+    // Covering no ground is the same complaint as repeating yourself, so the
+    // one slider governs both; 0 turns laps back into free distance.
+    out['confinement'] = out['oscillation'] / 4;
+  }
   return out;
 }
 const distanceInput = document.getElementById('distance-input') as HTMLInputElement;

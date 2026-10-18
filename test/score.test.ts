@@ -16,7 +16,7 @@ function triangle(n: number, peak: number): Float32Array {
   return out;
 }
 
-function courseFrom(samples: Float32Array): AssembledCourse {
+function courseFrom(samples: Float32Array, reachRatio = 0.5): AssembledCourse {
   let gain = 0;
   let loss = 0;
   for (let i = 1; i < samples.length; i++) {
@@ -33,6 +33,7 @@ function courseFrom(samples: Float32Array): AssembledCourse {
     penaltyFraction: 0,
     repeatFraction: 0,
     oscillationFraction: 0,
+    reachM: (samples.length - 1) * 25 * reachRatio,
     turnsPerKm: 0,
     denseTurnsPerKm: 0,
     signalsPerKm: 0,
@@ -81,6 +82,18 @@ describe('scoreCourse', () => {
     const laps = { ...clean, repeatFraction: 0.3 };
     const bounce = { ...clean, oscillationFraction: 0.3 };
     expect(scoreCourse(bounce, target)).toBeGreaterThan(2 * scoreCourse(laps, target));
+  });
+
+  it('a course going nowhere is punished however well its profile fits', () => {
+    // 20 km of laps that never get 200 m from the start, against 20 km of
+    // running: identical profiles, so only the ground covered separates them.
+    const circles = courseFrom(triangle(801, 100), 0.01);
+    const sprawling = courseFrom(triangle(801, 100));
+    expect(scoreCourse(sprawling, target)).toBeCloseTo(0, 5);
+    expect(scoreCourse(circles, target)).toBeGreaterThan(0.8 * DEFAULT_WEIGHTS.confinement);
+
+    // A loop reaching a sixth of its length away is fine, penalty-free.
+    expect(scoreCourse(courseFrom(triangle(801, 100), 1 / 6), target)).toBeCloseTo(0, 5);
   });
 
   it('surface mismatch penalises a trail course against a road mix', () => {
