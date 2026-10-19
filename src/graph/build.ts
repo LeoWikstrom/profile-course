@@ -1,5 +1,5 @@
 import { bearingDeg, haversineMeters, turnPositions } from '../shared/geo';
-import { SAMPLE_STEP_M, movingMedian5 } from '../gpx/profile';
+import { SAMPLE_STEP_M } from '../gpx/profile';
 import type { OverpassResponse, OverpassWay } from '../net/overpass';
 import type { TerrainSampler } from '../net/terrain';
 import {
@@ -714,7 +714,14 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
       for (let i = 0; i < count; i++) out[i] = first + ((last - first) * i) / (count - 1);
       edge.elev = out;
     } else {
-      edge.elev = movingMedian5(raw);
+      // Raw, deliberately. The median belongs to GPX, where it removes
+      // barometric spikes; the DEM is bilinear over a ~30 m grid and already
+      // smooth. Worse, an edge is a street between two junctions — most are
+      // 25-50 m, so a 5-wide window spans the whole edge and flattens it to one
+      // value, and a shared junction came out at a different height depending
+      // on which edge was asked. On the test graph that lost four fifths of the
+      // real relief and moved edge ends by 3 m on average, 56 m at worst.
+      edge.elev = Float32Array.from(raw);
     }
     offset += count;
   }

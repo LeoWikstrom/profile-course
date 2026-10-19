@@ -28,7 +28,13 @@ read it before starting a new phase.
    not connected to the start, then prune dead-end subtrees (cul-de-sacs, driveways) — Leo
    explicitly wants no in-and-back-out detours. Surface mismatch uses a cost matrix where
    paved↔gravel ≈ 0.1 (near-equivalent for a runner) but paved↔trail = 1.0.
-4. Sample elevation per edge from DEM tiles, bilinear, same median smoothing as GPX.
+4. Sample elevation per edge from DEM tiles, bilinear, **raw — no median smoothing**. The
+   median belongs to GPX, where it removes barometric spikes; the DEM is already smooth. An
+   edge is a street between two junctions, and most are 25–50 m, so a 5-wide window spanned
+   the whole edge and flattened it to a single value — on the test graph that lost four fifths
+   of the real relief (469 m of edge-local gain down to 83 m) and moved edge-end heights by 3 m
+   on average, 56 m at worst, with a shared junction coming out at a different height depending
+   on which edge was asked.
 5. Snap start to nearest graph node within 100 m.
 
 The radius is a **start/finish zone only** (Leo's decision): courses may go arbitrarily far
@@ -141,7 +147,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       count, since one edge can be longer than the radius). The drawn window and the rubber band
       follow the same rule, so the band never promises more than it keeps.
       Via points outrank edits: the window shrinks
-      rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
+      rather than route one away. The worker keeps the exact path behind **every** course it has
+      sent out, found again by a hash of the geometry it sent (plus the graph key, since a path
+      is indices into one graph). Map-matching a course we generated ourselves back to the graph
+      is lossy — it rewrites the course wherever the match prefers another way through, anywhere
+      at all, which is what used to change the course far outside the edit window after a tab
+      switch or an undo. Matching is now only for geometry we never produced: an uploaded course,
+      or a session restored after a reload.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).
@@ -175,7 +187,10 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       *Holding* a dot marks it red instead of pulling it and reveals a Delete button; several can
       be marked, and they go in one edit, because deleting them one at a time would route each
       reconnection through the next node about to go. Neighbouring marked nodes are bypassed as
-      one run, by a single shortest path excluding all of them. Tapping a marked dot releases it;
+      one run, by a single shortest path excluding all of them, and every run's way round avoids
+      every marked node, not just its own — otherwise a node the user marked came back on the
+      course by the side door, as another run's detour. On a tight network that can leave no way
+      round at all, and then the batch is refused rather than half done. Tapping a marked dot releases it;
       Esc backs out exactly one step, innermost first: a pull in progress or a half-finished
       two-tap edit (dropped with the course untouched, still in editing mode), then the marks,
       then node submode, then editing itself. Editing feedback also shows in a
@@ -201,8 +216,8 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       strip says what is ready without being read. The strip itself is `pointer-events: none`
       so the map stays usable between tabs, and it publishes its height as `--tab-strip-h`,
       which pushes the edit/via bars and the status pill down. 1–9 selects, and the arrows walk the strip
-      once a tab has focus. Switching leaves editing mode and marks the worker's cached path
-      stale, so the next edit or improve re-matches. An edit, undo or improve rewrites the shown
+      once a tab has focus. Switching leaves editing mode; the worker still holds every tab's own
+      path, so an edit lands on the course on screen. An edit, undo or improve rewrites the shown
       tab in place. The whole strip survives a reload (every course is persisted, with which one
       was shown); only the shown course goes into the URL hash.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava

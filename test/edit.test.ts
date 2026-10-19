@@ -91,8 +91,10 @@ describe('reroutePath', () => {
     const atM = 800;
     const rerouted = reroutePath(graph, course.path, atM, off, { windowM: 600 });
     expect(rerouted).not.toBeNull();
-    // Reached near the km that was asked for, without stretching the course.
-    expect(Math.abs(distanceToNode(rerouted!, off) - atM)).toBeLessThan(300);
+    // Inside the window — the point is no longer required to land on the km
+    // picked, only within the stretch the edit was allowed to replace.
+    expect(Math.abs(distanceToNode(rerouted!, off) - atM)).toBeLessThanOrEqual(600);
+    // And without stretching the course.
     const before = cumLengths(course.path);
     const after = cumLengths(rerouted!);
     expect(Math.abs(after[after.length - 1]! - before[before.length - 1]!)).toBeLessThan(300);
@@ -212,37 +214,52 @@ describe('node editing', () => {
   });
 
   it('deletes several marked nodes in one edit, round all of them', async () => {
-    const target = buildProfileFromSamples(new Float32Array(81), 2000);
-    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    // 1200 m, not 2000: the fixture is 250 m across, so a 2 km course doubles
+    // back over nearly every node, and a node the course passes twice keeps its
+    // other pass after a delete — nothing this test could then assert.
+    const target = buildProfileFromSamples(new Float32Array(49), 1200);
+    const results = await beamSearch(graph, startNode, target, 1200, { seed: 3 });
     const course = results[0]!;
     const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
     const cum = cumLengths(course.path);
     const count = (list: number[], node: number) => list.filter((n) => n === node).length;
 
     // Two neighbours and one on its own: the pair has to be bypassed together,
-    // or the reconnection would route through the other one about to go.
-    const pair = spotAt(course.path, 700).at;
-    const lone = spotAt(course.path, 1400).at;
-    expect(lone).toBeGreaterThan(pair + 2);
-    const marked = [cum[pair]!, cum[pair + 1]!, cum[lone]!];
+    // or the reconnection would route through the other one about to go, and
+    // neither run's way round may lead through the lone node either. Marking
+    // nodes the course passes only once is what makes a drop observable.
+    // Every such trio in this course is tried: on so tight a network some of
+    // them have no way round at all, and refusing those is correct — but when
+    // a batch does come back, every node in it has to be off the course.
+    const once = (i: number) => count(nodes, nodes[i]!) === 1;
+    let done = 0;
+    for (let pair = 1; pair < nodes.length - 2; pair++) {
+      if (!once(pair) || !once(pair + 1)) continue;
+      for (let lone = pair + 3; lone < nodes.length - 1; lone++) {
+        if (!once(lone)) continue;
+        const marked = [cum[pair]!, cum[pair + 1]!, cum[lone]!];
 
-    const trimmed = deleteNodesFromPath(graph, course.path, marked);
-    expect(trimmed).not.toBeNull();
-    const after = pathNodes(graph, trimmed!, pathRoot(graph, trimmed!));
-    expect(after[0]).toBe(nodes[0]);
-    expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
-    for (const at of [pair, pair + 1, lone]) {
-      expect(count(after, nodes[at]!)).toBeLessThan(count(nodes, nodes[at]!));
+        // A via on any one of them keeps the whole batch.
+        expect(
+          deleteNodesFromPath(graph, course.path, marked, { keepNodes: new Set([nodes[lone]!]) }),
+        ).toBeNull();
+
+        const trimmed = deleteNodesFromPath(graph, course.path, marked);
+        if (!trimmed) continue;
+        done++;
+        const after = pathNodes(graph, trimmed, pathRoot(graph, trimmed));
+        expect(after[0]).toBe(nodes[0]);
+        expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
+        for (const at of [pair, pair + 1, lone]) {
+          expect(count(after, nodes[at]!)).toBeLessThan(count(nodes, nodes[at]!));
+        }
+        // The survivors either side of each run are still on the course.
+        expect(after).toContain(nodes[pair - 1]!);
+        expect(after).toContain(nodes[pair + 2]!);
+        expect(assembleCourse(graph, trimmed).lengthM).toBeGreaterThan(0);
+      }
     }
-    // The survivors either side of each run are still on the course.
-    expect(after).toContain(nodes[pair - 1]!);
-    expect(after).toContain(nodes[pair + 2]!);
-    expect(assembleCourse(graph, trimmed!).lengthM).toBeGreaterThan(0);
-
-    // A via on any one of them keeps the whole batch.
-    expect(
-      deleteNodesFromPath(graph, course.path, marked, { keepNodes: new Set([nodes[lone]!]) }),
-    ).toBeNull();
+    expect(done).toBeGreaterThan(0);
   });
 
   it('moves a node onto a chosen node without moving the others', async () => {

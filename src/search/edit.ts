@@ -271,10 +271,15 @@ export function deleteNodesFromPath(
     else runs.push([at, at]);
   }
 
+  // Every marked node is avoided by every run's detour, not just by its own:
+  // one run's way round must not lead through a node another run is dropping,
+  // or a node the user marked comes back on the course by the side door.
+  const avoid = new Set(indices.map((at) => nodes[at]!));
+
   let out = path;
   for (let r = runs.length - 1; r >= 0; r--) {
     const [lo, hi] = runs[r]!;
-    const legs = bypass(graph, nodes, cum, lo, hi, out, lo - 1, hi + 1);
+    const legs = bypass(graph, nodes, cum, lo, hi, out, lo - 1, hi + 1, avoid);
     if (!legs) return null;
     out = splice(out, lo - 1, hi + 1, legs);
   }
@@ -291,6 +296,7 @@ function bypass(
   path: CoursePath,
   fromIdx: number,
   toIdx: number,
+  alsoAvoid?: Set<number>,
 ): Legs | null {
   const from = nodes[fromIdx]!;
   const to = nodes[toIdx]!;
@@ -299,7 +305,7 @@ function bypass(
     if (path.edges.length <= toIdx - fromIdx) return null;
     return { edges: [], dirs: [] };
   }
-  const excluded = new Set<number>();
+  const excluded = new Set<number>(alsoAvoid);
   for (let i = lo; i <= hi; i++) excluded.add(nodes[i]!);
   const direct = reconstructPath(
     graph,

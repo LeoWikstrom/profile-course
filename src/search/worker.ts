@@ -94,9 +94,47 @@ let validEnd: Uint8Array | null = null;
 let preparedKey = '';
 let cancelled = false;
 
-/** Last map-matched uploaded course, for the Improve button. */
-let matchedPath: CoursePath | null = null;
-let matchedKey = '';
+/**
+ * The exact path behind every course this worker has sent out, found again by
+ * the geometry it sent. An edit or an improve arrives as the course's points,
+ * and map-matching them back to the graph is lossy — it rewrites the course
+ * wherever the match prefers another way through, far outside any edit window.
+ * So the paths are kept, and matching is left for geometry we never produced
+ * (an uploaded course, or a session restored after a reload).
+ */
+const pathCache = new Map<string, CoursePath>();
+
+/** Enough for four tabs and a long chain of edits on each. */
+const PATH_CACHE_MAX = 64;
+
+/**
+ * FNV-1a over the coordinates, rounded to 1e-7 of a degree (a centimetre), so
+ * a key survives the round trip through postMessage and session storage. The
+ * graph key is part of it: a path is node and edge indices into one graph.
+ */
+function geometryKey(lats: ArrayLike<number>, lons: ArrayLike<number>): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < lats.length; i++) {
+    for (const v of [Math.round(lats[i]! * 1e7), Math.round(lons[i]! * 1e7)]) {
+      h = Math.imul(h ^ (v & 0xffff), 0x01000193);
+      h = Math.imul(h ^ (v >>> 16), 0x01000193);
+    }
+  }
+  return `${preparedKey}|${lats.length}|${(h >>> 0).toString(36)}`;
+}
+
+function rememberPath(path: CoursePath, points: { lat: number; lon: number }[]): void {
+  const lats = new Float64Array(points.length);
+  const lons = new Float64Array(points.length);
+  for (let i = 0; i < points.length; i++) {
+    lats[i] = points[i]!.lat;
+    lons[i] = points[i]!.lon;
+  }
+  pathCache.set(geometryKey(lats, lons), path);
+  while (pathCache.size > PATH_CACHE_MAX) {
+    pathCache.delete(pathCache.keys().next().value!);
+  }
+}
 
 /** The course may leave the radius; cap how wide a network we are willing to pull. */
 const MAX_GRAPH_RADIUS_M = 15_000;
@@ -196,6 +234,7 @@ function toResult(
       exportPoints.push({ lat: lats[j]!, lon: lons[j]!, ele: elev[Math.min(j, elev.length - 1)]! });
     }
   }
+  rememberPath(candidate.path, exportPoints);
   return {
     segments: pathSegments(g, candidate.path),
     samples: candidate.course.samples,
@@ -470,9 +509,6 @@ async function search(
     usedRoots.push(pathRoot(g, winner.path));
 
     if (first) {
-      // Keep the winner editable/improvable like a matched course.
-      matchedPath = winner.path;
-      matchedKey = preparedKey;
       const tDone = performance.now();
       console.log(
         `search timings (${algorithm}): prepare ${(tGraph - t0).toFixed(0)} ms, ` +
@@ -524,8 +560,6 @@ async function matchCourse(
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
   const course = assembleCourse(g, path);
   const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
-  matchedPath = path;
-  matchedKey = preparedKey;
   post({
     type: 'matched',
     course: toResult(
@@ -540,16 +574,13 @@ async function matchCourse(
 }
 
 /**
- * Returns the current course path, rebuilding worker state from the course's
- * own points when memory was lost (page reload, session restore) or when the
- * caller has moved on from it (undo).
+ * Returns the path behind the course these points came from: the exact one if
+ * this worker produced it (any tab, any step of its edit history), otherwise a
+ * fresh map-match, which is all an uploaded course or a restored session has.
  */
-async function ensureCurrentPath(
-  lats: Float64Array,
-  lons: Float64Array,
-  resync = false,
-): Promise<CoursePath> {
-  if (!resync && matchedPath && graph && matchedKey === preparedKey) return matchedPath;
+async function ensureCurrentPath(lats: Float64Array, lons: Float64Array): Promise<CoursePath> {
+  const known = graph ? pathCache.get(geometryKey(lats, lons)) : undefined;
+  if (known) return known;
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
@@ -561,8 +592,6 @@ async function ensureCurrentPath(
   const halfDiag = haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
   await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0, true);
   const { path } = matchTrackToGraph(graph!, lats, lons);
-  matchedPath = path;
-  matchedKey = preparedKey;
   return path;
 }
 
@@ -574,11 +603,10 @@ async function editCourse(
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
-  resync: boolean,
   viaPoints: ViaPoint[],
   windowM: number,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons, resync);
+  const currentPath = await ensureCurrentPath(lats, lons);
   const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
   if (targetNode < 0) {
@@ -610,10 +638,9 @@ async function nodeEdit(
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
-  resync: boolean,
   viaPoints: ViaPoint[],
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons, resync);
+  const currentPath = await ensureCurrentPath(lats, lons);
   const g = graph!;
   const keep = viaKeepSets(g, viaPoints);
   const atM = atKm * 1000;
@@ -664,7 +691,6 @@ function postEdited(
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
   const course = assembleCourse(g, newPath);
   const score = scoreCourse(course, target, desiredMix ?? MIX_ROAD, weights);
-  matchedPath = newPath;
   post({
     type: 'matched',
     course: toResult(
@@ -684,9 +710,8 @@ async function improveMatched(
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
-  resync: boolean,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons, resync);
+  const currentPath = await ensureCurrentPath(lats, lons);
   cancelled = false;
   const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
@@ -701,7 +726,6 @@ async function improveMatched(
     course.lengthM,
     { desiredMix: desiredMix ?? MIX_ROAD, weights, maxCandidates: 1, passes: 6, shouldCancel: () => cancelled },
   );
-  matchedPath = improved[0]!.path;
   post({
     type: 'matched',
     course: toResult(
@@ -772,7 +796,6 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.target,
         msg.desiredMix,
         msg.weights,
-        msg.resync ?? false,
         msg.viaPoints ?? [],
         msg.rerouteWindowM ?? DEFAULT_WINDOW_M,
       ).catch((err: unknown) =>
@@ -790,14 +813,13 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.target,
         msg.desiredMix,
         msg.weights,
-        msg.resync ?? false,
         msg.viaPoints ?? [],
       ).catch((err: unknown) =>
         post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'improveCourse':
-      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights, msg.resync ?? false).catch(
+      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

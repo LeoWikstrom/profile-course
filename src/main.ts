@@ -128,8 +128,6 @@ function showCandidate(index: number): void {
   if (editingMode) exitEditing();
   shownCandidate = index;
   lastResult = picked;
-  // The worker still holds the course we just left.
-  workerCourseStale = true;
   showResult(picked);
   drawCourseTabs();
   startHint.textContent = `Course ${index + 1} — mismatch ${picked.course.score.toFixed(1)}.`;
@@ -517,7 +515,6 @@ function editPayload(result: { course: CourseResult; profile: TargetProfile }) {
     target: targetTransfer(result.profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),
-    resync: workerCourseStale,
     viaPoints,
   };
 }
@@ -530,7 +527,6 @@ function sendEdit(
   beginEdit(result, to);
   setEditStatus('Rerouting…');
   send({ type: 'editCourse', atKm, to, ...editPayload(result), rerouteWindowM: rerouteWindowM() });
-  workerCourseStale = false;
   refreshEditBar();
 }
 
@@ -551,19 +547,15 @@ function sendNodeEdit(
         : `Adding a point near km ${atKm.toFixed(1)}…`;
   setEditStatus(what);
   send({ type: 'nodeEdit', op, atKm, ...(atKms ? { atKms } : {}), to, ...editPayload(result) });
-  workerCourseStale = false;
   refreshEditBar();
 }
 
-/** True when the worker still holds a course we have since moved away from. */
-let workerCourseStale = false;
 /** An edit is in flight: its history entry and marker are still speculative. */
 let pendingEdit = false;
 
 function undoEdit(): void {
   const previous = editHistory.pop();
   if (!previous) return;
-  workerCourseStale = true; // the worker's cached path is the edit we just dropped
   editedPoints.pop();
   drawEditMarkers();
   replaceShownCandidate(previous);
@@ -1202,9 +1194,7 @@ function sendImproveMatched(): void {
     target: targetTransfer(profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
     weights: collectWeights(),
-    resync: workerCourseStale,
   });
-  workerCourseStale = false;
 }
 
 compareInput.addEventListener('change', async () => {
