@@ -95,45 +95,30 @@ let preparedKey = '';
 let cancelled = false;
 
 /**
- * The exact path behind every course this worker has sent out, found again by
- * the geometry it sent. An edit or an improve arrives as the course's points,
- * and map-matching them back to the graph is lossy — it rewrites the course
- * wherever the match prefers another way through, far outside any edit window.
- * So the paths are kept, and matching is left for geometry we never produced
- * (an uploaded course, or a session restored after a reload).
+ * The exact path behind every course this worker has sent out, under the id the
+ * course carries. An edit names the path that way, instead of sending the
+ * geometry back to be map-matched: matching is lossy, and rewrites the course
+ * wherever it prefers another way through — far outside any edit window.
+ * Paths belong to the graph they index into, so a new graph empties the cache.
  */
-const pathCache = new Map<string, CoursePath>();
+const pathCache = new Map<number, CoursePath>();
+let pathCacheKey = '';
+let nextPathId = 1;
 
 /** Enough for four tabs and a long chain of edits on each. */
 const PATH_CACHE_MAX = 64;
 
-/**
- * FNV-1a over the coordinates, rounded to 1e-7 of a degree (a centimetre), so
- * a key survives the round trip through postMessage and session storage. The
- * graph key is part of it: a path is node and edge indices into one graph.
- */
-function geometryKey(lats: ArrayLike<number>, lons: ArrayLike<number>): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < lats.length; i++) {
-    for (const v of [Math.round(lats[i]! * 1e7), Math.round(lons[i]! * 1e7)]) {
-      h = Math.imul(h ^ (v & 0xffff), 0x01000193);
-      h = Math.imul(h ^ (v >>> 16), 0x01000193);
-    }
+function rememberPath(path: CoursePath): number {
+  if (pathCacheKey !== preparedKey) {
+    pathCache.clear();
+    pathCacheKey = preparedKey;
   }
-  return `${preparedKey}|${lats.length}|${(h >>> 0).toString(36)}`;
-}
-
-function rememberPath(path: CoursePath, points: { lat: number; lon: number }[]): void {
-  const lats = new Float64Array(points.length);
-  const lons = new Float64Array(points.length);
-  for (let i = 0; i < points.length; i++) {
-    lats[i] = points[i]!.lat;
-    lons[i] = points[i]!.lon;
-  }
-  pathCache.set(geometryKey(lats, lons), path);
+  const id = nextPathId++;
+  pathCache.set(id, path);
   while (pathCache.size > PATH_CACHE_MAX) {
     pathCache.delete(pathCache.keys().next().value!);
   }
+  return id;
 }
 
 /** The course may leave the radius; cap how wide a network we are willing to pull. */
@@ -234,8 +219,8 @@ function toResult(
       exportPoints.push({ lat: lats[j]!, lon: lons[j]!, ele: elev[Math.min(j, elev.length - 1)]! });
     }
   }
-  rememberPath(candidate.path, exportPoints);
   return {
+    pathId: rememberPath(candidate.path),
     segments: pathSegments(g, candidate.path),
     samples: candidate.course.samples,
     exportPoints,
@@ -574,13 +559,21 @@ async function matchCourse(
 }
 
 /**
- * Returns the path behind the course these points came from: the exact one if
- * this worker produced it (any tab, any step of its edit history), otherwise a
- * fresh map-match, which is all an uploaded course or a restored session has.
+ * Returns the path the course with this id was built from: the exact one if this
+ * worker still holds it (any tab, any step of its edit history), otherwise a
+ * map-match of the points, which is all an uploaded course or a session
+ * restored after a reload has. The graph in hand is matched against when there
+ * is one, because the course came from it; only a worker with no graph at all
+ * goes to the network, and an edit must never wait on that if it can help it.
  */
-async function ensureCurrentPath(lats: Float64Array, lons: Float64Array): Promise<CoursePath> {
-  const known = graph ? pathCache.get(geometryKey(lats, lons)) : undefined;
+async function ensureCurrentPath(
+  pathId: number,
+  lats: Float64Array,
+  lons: Float64Array,
+): Promise<CoursePath> {
+  const known = graph ? pathCache.get(pathId) : undefined;
   if (known) return known;
+  if (graph) return matchTrackToGraph(graph, lats, lons).path;
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
@@ -598,6 +591,7 @@ async function ensureCurrentPath(lats: Float64Array, lons: Float64Array): Promis
 async function editCourse(
   atKm: number,
   to: LatLon,
+  pathId: number,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
@@ -606,7 +600,7 @@ async function editCourse(
   viaPoints: ViaPoint[],
   windowM: number,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons);
+  const currentPath = await ensureCurrentPath(pathId, lats, lons);
   const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
   if (targetNode < 0) {
@@ -633,6 +627,7 @@ async function nodeEdit(
   atKm: number,
   atKms: number[] | undefined,
   to: LatLon | null,
+  pathId: number,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
@@ -640,7 +635,7 @@ async function nodeEdit(
   weightsIn: Record<string, number> | null,
   viaPoints: ViaPoint[],
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons);
+  const currentPath = await ensureCurrentPath(pathId, lats, lons);
   const g = graph!;
   const keep = viaKeepSets(g, viaPoints);
   const atM = atKm * 1000;
@@ -705,13 +700,14 @@ function postEdited(
 }
 
 async function improveMatched(
+  pathId: number,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(lats, lons);
+  const currentPath = await ensureCurrentPath(pathId, lats, lons);
   cancelled = false;
   const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
@@ -791,6 +787,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       editCourse(
         msg.atKm,
         msg.to,
+        msg.pathId,
         msg.lats,
         msg.lons,
         msg.target,
@@ -808,6 +805,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.atKm,
         msg.atKms,
         msg.to,
+        msg.pathId,
         msg.lats,
         msg.lons,
         msg.target,
@@ -819,7 +817,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       );
       break;
     case 'improveCourse':
-      improveMatched(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+      improveMatched(msg.pathId, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

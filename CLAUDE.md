@@ -148,12 +148,14 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       follow the same rule, so the band never promises more than it keeps.
       Via points outrank edits: the window shrinks
       rather than route one away. The worker keeps the exact path behind **every** course it has
-      sent out, found again by a hash of the geometry it sent (plus the graph key, since a path
-      is indices into one graph). Map-matching a course we generated ourselves back to the graph
-      is lossy — it rewrites the course wherever the match prefers another way through, anywhere
-      at all, which is what used to change the course far outside the edit window after a tab
-      switch or an undo. Matching is now only for geometry we never produced: an uploaded course,
-      or a session restored after a reload.
+      sent out, under an id the course carries back with it (the cache empties when the graph
+      changes, since a path is indices into one graph). Map-matching a course we generated
+      ourselves back to the graph is lossy — it rewrites the course wherever the match prefers
+      another way through, anywhere at all, which is what used to change the course far outside
+      the edit window after a tab switch or an undo. Matching is now the fallback only: geometry
+      we never produced (an uploaded course) or an id this worker has never seen (a session
+      restored after a reload). A miss matches against the graph already in hand rather than
+      fetching one, so an edit never waits on the network while Overpass is down.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).

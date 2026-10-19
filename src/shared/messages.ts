@@ -28,6 +28,13 @@ export interface CourseSegment {
 }
 
 export interface CourseResult {
+  /**
+   * Identifies the exact path the worker built this course from, so an edit can
+   * name it instead of sending the geometry back to be map-matched — matching is
+   * lossy and rewrites the course far outside any edit window. Persisted with
+   * the course; a worker that has never seen the id falls back to matching.
+   */
+  pathId: number;
   segments: CourseSegment[];
   /** Elevation every ~25 m relative to course start. */
   samples: Float32Array;
@@ -95,7 +102,8 @@ export type MainToWorker =
       type: 'editCourse';
       atKm: number;
       to: LatLon;
-      /** The course's own points, to rebuild worker state after reloads. */
+      /** The path to edit, and its points for when the worker has lost it. */
+      pathId: number;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;
@@ -119,6 +127,7 @@ export type MainToWorker =
       atKms?: number[];
       /** Where the node should sit; null for a delete. */
       to: LatLon | null;
+      pathId: number;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;
@@ -129,6 +138,7 @@ export type MainToWorker =
   | {
       /** Run the improvement pass on the current course. */
       type: 'improveCourse';
+      pathId: number;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;

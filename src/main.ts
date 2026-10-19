@@ -511,6 +511,7 @@ function beginEdit(
 
 function editPayload(result: { course: CourseResult; profile: TargetProfile }) {
   return {
+    pathId: result.course.pathId,
     ...coursePointArrays(result.course),
     target: targetTransfer(result.profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
@@ -1190,6 +1191,7 @@ function sendImproveMatched(): void {
   findButton.textContent = 'Improving…';
   send({
     type: 'improveCourse',
+    pathId: lastResult.course.pathId,
     ...coursePointArrays(lastResult.course),
     target: targetTransfer(profile),
     desiredMix: SURFACE_PRESETS[surfaceSelect.value] ?? SURFACE_PRESETS['road']!,
