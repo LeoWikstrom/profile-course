@@ -12,6 +12,11 @@ body {
 #map {
   position: fixed;
   inset: 0;
+  /* Pulling the course is a drag gesture, not a text selection. Leaflet only
+     exempts tiles and marker icons, which leaves a pull free to mark the
+     tooltips, the controls and on into the panel — and once something is
+     marked, the next press drags the selection instead of the course. */
+  user-select: none;
 }
 
 #sheet {

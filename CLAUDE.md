@@ -206,6 +206,17 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       then node submode, then editing itself. Editing feedback also shows in a
       pill over the map, because the sheet may be collapsed — and on desktop that pill, the edit
       bar and the via bar all start beside the left panel, not over it.
+      **A refused edit says why**, in the pill *after* the re-arm — the re-arm would otherwise
+      talk over the reason with its own invitation, which left every refusal looking like
+      nothing had happened at all. If the worker no longer held the course's path and had to
+      match it back to the network to edit it, the refusal says that too: a lossy match is a
+      likelier reason for it than the window being too tight.
+      A pull also used to take the page's text with it. Leaflet exempts only tiles and marker
+      icons from selection, so a pull could mark the tooltips, the controls and on into the
+      panel, and the next press then dragged the selection instead of the course (and a native
+      drag cancels the pointer, so the edit was dropped). The map is now `user-select: none`,
+      and taking a pull clears the selection and preventDefaults the press. A via marker under
+      the press keeps its own drag.
 - [x] **Multiple candidates**: a search offers up to 4 courses, each from a search of its own.
       Picking them out of one search's runners-up gave four near-copies leaving by the same
       street (on the test fixture the runners-up sit at 0.88–1.00 edge overlap with the winner),

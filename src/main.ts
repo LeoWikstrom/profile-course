@@ -990,8 +990,6 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     case 'error':
       console.warn('worker:', msg.message);
-      if (editingMode) setEditStatus(msg.message);
-      else startHint.textContent = msg.message;
       if (pendingEdit) {
         // The reroute failed, so the course is unchanged: drop the entry and
         // marker that were added in anticipation.
@@ -1002,6 +1000,10 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
         refreshEditBar();
         if (editingMode && lastResult) armEditing(lastResult);
       }
+      // After the re-arm, which would otherwise talk over the reason with its
+      // own invitation — leaving a refused edit looking like nothing happened.
+      if (editingMode) setEditStatus(msg.message);
+      else startHint.textContent = msg.message;
       downloadAreaButton.textContent = 'Download area around start';
       downloadAreaButton.disabled = map.getStart() === null;
       areaProgress.hidden = true;

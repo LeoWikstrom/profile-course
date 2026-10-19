@@ -570,10 +570,10 @@ async function ensureCurrentPath(
   pathId: number,
   lats: Float64Array,
   lons: Float64Array,
-): Promise<CoursePath> {
+): Promise<{ path: CoursePath; exact: boolean }> {
   const known = graph ? pathCache.get(pathId) : undefined;
-  if (known) return known;
-  if (graph) return matchTrackToGraph(graph, lats, lons).path;
+  if (known) return { path: known, exact: true };
+  if (graph) return { path: matchTrackToGraph(graph, lats, lons).path, exact: false };
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
@@ -585,7 +585,16 @@ async function ensureCurrentPath(
   const halfDiag = haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
   await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0, true);
   const { path } = matchTrackToGraph(graph!, lats, lons);
-  return path;
+  return { path, exact: false };
+}
+
+/**
+ * Said after a refused edit. A course whose path the worker no longer holds was
+ * matched back to the network to be edited at all, and a match that went badly
+ * is a likelier reason for the refusal than the window being too tight.
+ */
+function matchedNote(exact: boolean): string {
+  return exact ? '' : ' (this course had to be matched back to the path network first)';
 }
 
 async function editCourse(
@@ -600,7 +609,7 @@ async function editCourse(
   viaPoints: ViaPoint[],
   windowM: number,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath, exact } = await ensureCurrentPath(pathId, lats, lons);
   const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
   if (targetNode < 0) {
@@ -614,9 +623,10 @@ async function editCourse(
   });
   if (!newPath) {
     throw new Error(
-      keep.nodes.size > 0
+      (keep.nodes.size > 0
         ? 'Could not route through that point without dropping a via point'
-        : `Nothing within ±${Math.round(windowM)} m of km ${atKm.toFixed(1)} can reach that point — pick somewhere nearer the course, or widen the edit window`,
+        : `Nothing within ±${Math.round(windowM)} m of km ${atKm.toFixed(1)} can reach that point — pick somewhere nearer the course, or widen the edit window`) +
+        matchedNote(exact),
     );
   }
   postEdited(g, newPath, target, desiredMix, weightsIn);
@@ -635,7 +645,7 @@ async function nodeEdit(
   weightsIn: Record<string, number> | null,
   viaPoints: ViaPoint[],
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath, exact } = await ensureCurrentPath(pathId, lats, lons);
   const g = graph!;
   const keep = viaKeepSets(g, viaPoints);
   const atM = atKm * 1000;
@@ -646,9 +656,10 @@ async function nodeEdit(
     const newPath = deleteNodesFromPath(g, currentPath, atMs, options);
     if (!newPath) {
       throw new Error(
-        atMs.length > 1
+        (atMs.length > 1
           ? 'Those points stay: one of them is a via point, an end of the course, or the only way through'
-          : 'That point stays: it is a via point, an end of the course, or the only way through',
+          : 'That point stays: it is a via point, an end of the course, or the only way through') +
+          matchedNote(exact),
       );
     }
     postEdited(g, newPath, target, desiredMix, weightsIn);
@@ -667,9 +678,9 @@ async function nodeEdit(
       : insertNodeIntoPath(g, currentPath, atM, node, options);
   if (!newPath) {
     throw new Error(
-      op === 'move'
+      (op === 'move'
         ? 'Could not connect the neighbouring points to there (or it is a via point)'
-        : 'Could not add a course point there',
+        : 'Could not add a course point there') + matchedNote(exact),
     );
   }
   postEdited(g, newPath, target, desiredMix, weightsIn);
@@ -707,7 +718,7 @@ async function improveMatched(
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
-  const currentPath = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath } = await ensureCurrentPath(pathId, lats, lons);
   cancelled = false;
   const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };

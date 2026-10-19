@@ -356,11 +356,17 @@ export function createMap(container: string): MapController {
 
   mapEl.addEventListener('pointerdown', (e) => {
     if (!pullCb || pullStart) return;
+    // A via marker often sits on the course; its own drag comes first.
+    if ((e.target as Element | null)?.closest?.('.leaflet-marker-icon.leaflet-interactive')) return;
     let i = nearestCoursePoint(e, pullPoints);
     // Between the grab points, the course line itself can be pulled out.
     pullOnLine = i < 0 && lineGrab !== null;
     if (pullOnLine) i = nearestCoursePoint(e, lineGrab!.points);
     if (i < 0) return; // away from the course: let the map pan as usual
+    // The gesture owns the pointer from here: no selection started under it,
+    // and nothing already marked dragged along with it.
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
     pullIndex = i;
     pullStart = { x: e.clientX, y: e.clientY };
     pullAnchors = (pullOnLine ? lineGrab!.anchors?.(i) : anchorsCb?.(i)) ?? null;
@@ -497,6 +503,11 @@ export function createMap(container: string): MapController {
   };
   mapEl.addEventListener('pointerup', (e) => endPull(e, true));
   mapEl.addEventListener('pointercancel', (e) => endPull(e, false));
+  // A native drag would take the pointer away mid-pull and the edit would be
+  // dropped on a pointercancel, looking exactly like a refusal.
+  mapEl.addEventListener('dragstart', (e) => {
+    if (pullStart) e.preventDefault();
+  });
 
   return {
     armViaPlacement(cb) {
