@@ -45,6 +45,7 @@ const editBar = document.getElementById('edit-bar') as HTMLDivElement;
 const editExitButton = document.getElementById('edit-exit') as HTMLButtonElement;
 const editUndoButton = document.getElementById('edit-undo') as HTMLButtonElement;
 const editNodesButton = document.getElementById('edit-nodes') as HTMLButtonElement;
+const editDeleteButton = document.getElementById('edit-delete') as HTMLButtonElement;
 const editStatus = document.getElementById('edit-status') as HTMLParagraphElement;
 const rerouteWindow = document.getElementById('reroute-window') as HTMLInputElement;
 const showEditWindow = document.getElementById('show-edit-window') as HTMLInputElement;
@@ -135,14 +136,36 @@ function showCandidate(index: number): void {
   persistSession();
 }
 
-// Desktop: the number keys switch course, and the arrows walk the tab strip.
+// Desktop: Esc backs out a step, Delete clears the marked nodes, the number
+// keys switch course and the arrows walk the tab strip.
 window.addEventListener('keydown', (e) => {
-  if (e.metaKey || e.ctrlKey || e.altKey || candidates.length < 2) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   const focus = document.activeElement;
   const typing =
     focus instanceof HTMLInputElement ||
     focus instanceof HTMLTextAreaElement ||
     focus instanceof HTMLSelectElement;
+  if (e.key === 'Escape') {
+    if (!viaBar.hidden) {
+      map.disarmViaPlacement();
+      endViaPlacement();
+      startHint.textContent = 'Via point not placed.';
+    } else if (!editingMode) return;
+    else if (markedNodes.size > 0) clearMarks();
+    else if (nodeMode) {
+      nodeMode = false;
+      refreshEditBar();
+      if (lastResult) armEditing(lastResult);
+    } else exitEditing();
+    e.preventDefault();
+    return;
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !typing && markedNodes.size > 0) {
+    deleteMarkedNodes();
+    e.preventDefault();
+    return;
+  }
+  if (candidates.length < 2) return;
   const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
   if (step !== 0 && courseTabs.contains(focus)) {
     const next = Math.min(candidates.length - 1, Math.max(0, shownCandidate + step));
@@ -247,6 +270,9 @@ function refreshEditBar(): void {
   editBar.hidden = !editingMode;
   editUndoButton.disabled = editHistory.length === 0;
   editNodesButton.setAttribute('aria-pressed', String(nodeMode));
+  editDeleteButton.hidden = markedNodes.size === 0;
+  editDeleteButton.textContent =
+    markedNodes.size > 1 ? `Delete ${markedNodes.size}` : 'Delete';
   if (wasHidden && !editBar.hidden) slideIn(editBar);
 }
 
@@ -343,6 +369,12 @@ function previewEditWindow(
 let editingMode = false;
 /** Advanced submode: edits act on single course points instead of stretches. */
 let nodeMode = false;
+/**
+ * Course nodes held down in node mode, by index into `courseNodes`. They go
+ * together on Delete: deleting them one by one would route each reconnection
+ * through the next node about to be deleted.
+ */
+const markedNodes = new Set<number>();
 let lastAction: { label: string; onAction: () => void } | undefined;
 /** Courses replaced by an edit, newest last, for Undo. */
 const editHistory: { course: CourseResult; profile: TargetProfile }[] = [];
@@ -374,6 +406,7 @@ function exitEditing(): void {
   map.hideEditWindow();
   map.setEditMarkers([]);
   map.setNodeMarkers([]);
+  markedNodes.clear();
   editedPoints = [];
   editHistory.length = 0;
   startHint.textContent = 'Editing finished.';
@@ -386,9 +419,40 @@ editExitButton.addEventListener('click', exitEditing);
 editUndoButton.addEventListener('click', () => undoEdit());
 editNodesButton.addEventListener('click', () => {
   nodeMode = !nodeMode;
-  refreshEditBar();
+  // Arming first, because leaving the submode drops any marks it held.
   if (lastResult) armEditing(lastResult);
+  refreshEditBar();
 });
+editDeleteButton.addEventListener('click', () => deleteMarkedNodes());
+
+/** Marks belong to the course they were made on, so redraw them with it. */
+function drawNodeMarkers(): void {
+  if (lastResult && nodeMode) map.setNodeMarkers(courseNodes(lastResult.course), markedNodes);
+}
+
+function clearMarks(): void {
+  if (markedNodes.size === 0) return;
+  markedNodes.clear();
+  drawNodeMarkers();
+  refreshEditBar();
+  setEditStatus('Marks cleared.');
+}
+
+/** Drop every marked node in one edit, reconnecting the survivors around them. */
+function deleteMarkedNodes(): void {
+  if (!lastResult || markedNodes.size === 0) return;
+  const nodes = courseNodes(lastResult.course);
+  const kms = [...markedNodes]
+    .map((i) => nodes[i]?.km)
+    .filter((km): km is number => km !== undefined)
+    .sort((a, b) => a - b);
+  if (kms.length === 0) return;
+  const count = kms.length;
+  markedNodes.clear();
+  drawNodeMarkers();
+  sendNodeEdit(lastResult, 'delete', kms[0]!, null, kms);
+  if (count > 1) setEditStatus(`Removing ${count} points…`);
+}
 
 /** Record the course an edit is about to replace, so Undo can bring it back. */
 function beginEdit(
@@ -432,6 +496,7 @@ function sendNodeEdit(
   op: 'move' | 'delete' | 'add',
   atKm: number,
   to: { lat: number; lon: number } | null,
+  atKms?: number[],
 ): void {
   beginEdit(result, null);
   const what =
@@ -441,7 +506,7 @@ function sendNodeEdit(
         ? `Removing the point at km ${atKm.toFixed(1)}…`
         : `Adding a point near km ${atKm.toFixed(1)}…`;
   setEditStatus(what);
-  send({ type: 'nodeEdit', op, atKm, to, ...editPayload(result) });
+  send({ type: 'nodeEdit', op, atKm, ...(atKms ? { atKms } : {}), to, ...editPayload(result) });
   workerCourseStale = false;
   refreshEditBar();
 }
@@ -475,7 +540,7 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   const kmAt = (index: number) => nodes?.[index]?.km ?? cum[index]! / 1000;
   setEditStatus(
     nodeMode
-      ? 'Nodes: pull a dot to move it, pull between dots to add one, tap a dot to delete it.'
+      ? 'Nodes: pull a dot to move it, tap one to delete it, hold to mark several.'
       : 'Editing: pull the course where you want it, or tap a point on it.',
   );
   /** The leg of the course a distance falls on, as an index into `nodes`. */
@@ -485,7 +550,9 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     return leg;
   };
   drawEditMarkers();
-  map.setNodeMarkers(nodes ?? []);
+  // An edit rewrites the node list, so marks made against the old one are gone.
+  markedNodes.clear();
+  map.setNodeMarkers(nodes ?? [], markedNodes);
   map.hideEditWindow();
 
   const selectDestination = (index: number) => {
@@ -504,11 +571,32 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
       const atKm = kmAt(index);
       if (nodeMode) {
         if (dragged) sendNodeEdit(result, 'move', atKm, to);
-        else sendNodeEdit(result, 'delete', atKm, null);
+        // A tap takes the dot, except on a marked one, which it releases.
+        else if (markedNodes.delete(index)) {
+          drawNodeMarkers();
+          refreshEditBar();
+          setEditStatus(
+            markedNodes.size === 0
+              ? 'Mark released.'
+              : `Mark released — ${markedNodes.size} still marked.`,
+          );
+        } else sendNodeEdit(result, 'delete', atKm, null);
       } else if (dragged) sendEdit(result, atKm, to);
       else selectDestination(index);
     },
     onGrab: (index) => previewEditWindow(points, cum, kmAt(index)),
+    ...(nodes
+      ? {
+          onLongPress: (index: number) => {
+            markedNodes.add(index);
+            drawNodeMarkers();
+            refreshEditBar();
+            setEditStatus(
+              `${markedNodes.size} point${markedNodes.size === 1 ? '' : 's'} marked — Delete removes them together.`,
+            );
+          },
+        }
+      : {}),
     anchors: (index) => {
       // The course either side of these two points is untouched by the edit:
       // the neighbouring junctions in node mode, the window ends otherwise.

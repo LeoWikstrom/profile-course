@@ -32,6 +32,8 @@ export function renderCourseTabs(
 ): void {
   el.textContent = '';
   el.hidden = tabs.length < 2;
+  // The strip floats over the map, so whatever else is up there moves down.
+  document.documentElement.style.setProperty('--tab-strip-h', el.hidden ? '0px' : '42px');
   if (el.hidden) return;
   tabs.forEach(({ score, fraction }, i) => {
     const tab = document.createElement('button');
@@ -41,7 +43,10 @@ export function renderCourseTabs(
     tab.tabIndex = i === selected ? 0 : -1;
     if (score === null) {
       tab.disabled = true;
-      tab.textContent = `${i + 1} · ${Math.round(fraction * 100)} %`;
+      const spinner = document.createElement('span');
+      spinner.className = 'tab-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      tab.append(spinner, `${i + 1} · ${Math.round(fraction * 100)} %`);
       tab.title = `Course ${i + 1} is still being searched for`;
     } else {
       tab.textContent = `${i + 1} · ${score.toFixed(1)}`;

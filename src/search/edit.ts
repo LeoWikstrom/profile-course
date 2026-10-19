@@ -5,6 +5,9 @@ import type { CoursePath } from './score';
 
 export const DEFAULT_WINDOW_M = 600;
 
+/** Per metre of replaced course, as a share of a metre of length error. */
+const SPAN_TIEBREAK = 0.05;
+
 export interface RerouteOptions {
   /** Half-width of the stretch that may be replaced (m). */
   windowM?: number;
@@ -30,10 +33,13 @@ function reversed(leg: EdgePath): EdgePath {
 
 /**
  * Reroute the course around `atM` so it passes through `targetNode`: the
- * stretch between two course nodes within `windowM` of `atM` is replaced by
- * shortest paths windowStart → target → windowEnd. The window start is picked
- * so the target is reached as near `atM` as the network allows, and the end so
- * the course keeps its length. Returns null when no route exists.
+ * stretch between two course nodes is replaced by shortest paths from the
+ * first to the target and on to the second. Both of those nodes must lie
+ * within `windowM` of `atM`, so the course outside the window is left exactly
+ * as it was — an edit the window cannot absorb is refused rather than allowed
+ * to rewrite the course either side of it. Which pair inside the window is
+ * used is then decided by length alone: the dragged point no longer has to be
+ * reached at the km that was picked. Returns null when no route exists.
  */
 export function reroutePath(
   graph: Graph,
@@ -73,34 +79,33 @@ export function reroutePath(
   const budget = Math.max(1500, windowM * 4);
   const tree = dijkstra(graph, [targetNode], { maxDist: budget });
 
-  let fromIdx = -1;
-  let fromErr = Infinity;
-  for (let i = Math.min(atIdx, highTo - 1); i >= lowFrom; i--) {
-    if (cum[i]! < at - windowM && fromIdx >= 0) break;
-    const d = tree.dist[nodes[i]!]!;
-    if (!Number.isFinite(d)) continue;
-    const err = Math.abs(cum[i]! + d - at);
-    if (err < fromErr) {
-      fromErr = err;
-      fromIdx = i;
-    }
-  }
-  if (fromIdx < 0) return null;
-  const outM = tree.dist[nodes[fromIdx]!]!;
+  // The two nodes the rerouted stretch hangs from, both inside the window.
+  let windowLow = lowFrom;
+  while (windowLow < atIdx && cum[windowLow]! < at - windowM) windowLow++;
+  let windowHigh = highTo;
+  while (windowHigh > atIdx && cum[windowHigh]! > at + windowM) windowHigh--;
 
+  let fromIdx = -1;
   let toIdx = -1;
-  let toErr = Infinity;
-  for (let j = Math.max(atIdx, fromIdx + 1); j <= highTo; j++) {
-    if (cum[j]! > at + windowM && toIdx >= 0) break;
-    const d = tree.dist[nodes[j]!]!;
-    if (!Number.isFinite(d)) continue;
-    const err = Math.abs(outM + d - (cum[j]! - cum[fromIdx]!));
-    if (err < toErr) {
-      toErr = err;
-      toIdx = j;
+  let bestErr = Infinity;
+  for (let i = Math.min(atIdx, highTo - 1); i >= windowLow; i--) {
+    const out = tree.dist[nodes[i]!]!;
+    if (!Number.isFinite(out)) continue;
+    for (let j = Math.max(atIdx, i + 1); j <= windowHigh; j++) {
+      const back = tree.dist[nodes[j]!]!;
+      if (!Number.isFinite(back)) continue;
+      const span = cum[j]! - cum[i]!;
+      // The pair that changes the course's length least; ties go to the
+      // shorter stretch, so an edit rewrites as little as it can.
+      const err = Math.abs(out + back - span) + SPAN_TIEBREAK * span;
+      if (err < bestErr) {
+        bestErr = err;
+        fromIdx = i;
+        toIdx = j;
+      }
     }
   }
-  if (toIdx < 0) return null;
+  if (fromIdx < 0 || toIdx < 0) return null;
 
   const back = reconstructPath(graph, tree, targetNode, nodes[fromIdx]!);
   const leg2 = reconstructPath(graph, tree, targetNode, nodes[toIdx]!);
@@ -204,28 +209,85 @@ export function deleteNodeFromPath(
   atM: number,
   options: NodeEditOptions = {},
 ): CoursePath | null {
-  const spot = locateNode(graph, path, atM);
-  if (!spot || pinned(path, spot, options)) return null;
-  const { nodes, cum, at } = spot;
-  const from = nodes[at - 1]!;
-  const to = nodes[at + 1]!;
-  // The course went out to the node and straight back: both legs go with it.
-  if (from === to) {
-    if (path.edges.length <= 2) return null;
-    return splice(path, at - 1, at + 1, { edges: [], dirs: [] });
+  return deleteNodesFromPath(graph, path, [atM], options);
+}
+
+/**
+ * Drop every course node nearest one of `atMs` at once. Nodes next to each
+ * other on the course go as one piece, so the two closest survivors either
+ * side reconnect by a single shortest route that avoids all of them — deleting
+ * them one at a time would instead route through the next one about to go.
+ * Returns null if any of them cannot be dropped.
+ */
+export function deleteNodesFromPath(
+  graph: Graph,
+  path: CoursePath,
+  atMs: number[],
+  options: NodeEditOptions = {},
+): CoursePath | null {
+  const spots = atMs.map((atM) => locateNode(graph, path, atM));
+  if (spots.length === 0) return null;
+  const first = spots[0];
+  if (!first) return null;
+  const { nodes, cum } = first;
+  const indices: number[] = [];
+  for (const spot of spots) {
+    if (!spot || pinned(path, spot, options)) return null;
+    if (!indices.includes(spot.at)) indices.push(spot.at);
   }
+  indices.sort((a, b) => a - b);
+
+  // Runs of neighbouring nodes, spliced back to front so the earlier runs'
+  // indices into the untouched head of the path stay valid.
+  const runs: [number, number][] = [];
+  for (const at of indices) {
+    const last = runs[runs.length - 1];
+    if (last && last[1] === at - 1) last[1] = at;
+    else runs.push([at, at]);
+  }
+
+  let out = path;
+  for (let r = runs.length - 1; r >= 0; r--) {
+    const [lo, hi] = runs[r]!;
+    const legs = bypass(graph, nodes, cum, lo, hi, out, lo - 1, hi + 1);
+    if (!legs) return null;
+    out = splice(out, lo - 1, hi + 1, legs);
+  }
+  return out;
+}
+
+/** Shortest route from the node before `lo` to the one after `hi`, round them. */
+function bypass(
+  graph: Graph,
+  nodes: number[],
+  cum: number[],
+  lo: number,
+  hi: number,
+  path: CoursePath,
+  fromIdx: number,
+  toIdx: number,
+): Legs | null {
+  const from = nodes[fromIdx]!;
+  const to = nodes[toIdx]!;
+  // The course went out to the nodes and straight back: both legs go with them.
+  if (from === to) {
+    if (path.edges.length <= toIdx - fromIdx) return null;
+    return { edges: [], dirs: [] };
+  }
+  const excluded = new Set<number>();
+  for (let i = lo; i <= hi; i++) excluded.add(nodes[i]!);
   const direct = reconstructPath(
     graph,
     dijkstra(graph, [from], {
       target: to,
-      maxDist: legBudget(cum[at + 1]! - cum[at - 1]!),
-      excludedNodes: new Set([nodes[at]!]),
+      maxDist: legBudget(cum[toIdx]! - cum[fromIdx]!),
+      excludedNodes: excluded,
     }),
     from,
     to,
   );
   if (!direct || direct.edges.length === 0) return null;
-  return splice(path, at - 1, at + 1, direct);
+  return direct;
 }
 
 /**

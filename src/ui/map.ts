@@ -13,6 +13,7 @@ const ARROW_SAMPLE_STRIDE = 20; // every ~500 m
 const EDIT_PANE = 'editPane';
 const GRAB_RADIUS_PX = 28;
 const DRAG_THRESHOLD_PX = 12;
+const LONG_PRESS_MS = 450;
 
 // Leaflet's _getIconUrl builds paths from imagePath, bypassing the bundler's
 // hashed asset URLs; removing it makes mergeOptions URLs win.
@@ -36,8 +37,8 @@ export interface MapController {
   setViaMarkers(vias: LatLon[], onMove: (index: number, p: LatLon) => void): void;
   /** Dots showing where the course has already been edited. */
   setEditMarkers(points: LatLon[]): void;
-  /** Dots on every junction of the course, for node editing. */
-  setNodeMarkers(points: LatLon[]): void;
+  /** Dots on every junction of the course, for node editing; `marked` stand out. */
+  setNodeMarkers(points: LatLon[], marked?: ReadonlySet<number>): void;
   /**
    * Press on the course and pull it somewhere else. `dragged` is false when the
    * press was really a tap, so the caller can fall back to a two-tap flow.
@@ -47,6 +48,8 @@ export interface MapController {
     handlers: {
       onPull: (index: number, to: LatLon, dragged: boolean) => void;
       onGrab?: (index: number) => void;
+      /** Held still on a point long enough to mean "mark", not "pull". */
+      onLongPress?: (index: number) => void;
       /** The fixed points the pulled stretch stays attached to, for the drag preview. */
       anchors?: (index: number) => readonly [LatLon, LatLon] | null;
       /** A pull may also start between the grab points, anywhere along this line. */
@@ -130,6 +133,7 @@ export function createMap(container: string): MapController {
 
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
   let grabCb: ((index: number) => void) | null = null;
+  let longPressCb: ((index: number) => void) | null = null;
   let anchorsCb: ((index: number) => readonly [LatLon, LatLon] | null) | null = null;
   let lineGrab: {
     points: LatLon[];
@@ -145,6 +149,22 @@ export function createMap(container: string): MapController {
   let pullAnchors: readonly [LatLon, LatLon] | null = null;
   let rubber: L.Polyline | null = null;
   let rubberPoint: L.Marker | null = null;
+  /** The hold has already been taken as a long press; the pull is off. */
+  let pullHeld = false;
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearHoldTimer(): void {
+    if (holdTimer === null) return;
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+
+  function clearRubber(): void {
+    rubber?.remove();
+    rubber = null;
+    rubberPoint?.remove();
+    rubberPoint = null;
+  }
 
   function nearestCoursePoint(e: PointerEvent, points: LatLon[]): number {
     const p = map.mouseEventToContainerPoint(e);
@@ -173,13 +193,30 @@ export function createMap(container: string): MapController {
     pullIndex = i;
     pullStart = { x: e.clientX, y: e.clientY };
     pullAnchors = (pullOnLine ? lineGrab!.anchors?.(i) : anchorsCb?.(i)) ?? null;
+    pullHeld = false;
     map.dragging.disable();
     mapEl.setPointerCapture(e.pointerId);
     if (!pullOnLine) grabCb?.(i);
+    // Holding a point still is a different gesture from pulling it: the pull
+    // is abandoned and the caller gets to mark the point instead.
+    if (longPressCb && !pullOnLine) {
+      const held = i;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        pullHeld = true;
+        clearRubber();
+        longPressCb?.(held);
+      }, LONG_PRESS_MS);
+    }
   });
 
   mapEl.addEventListener('pointermove', (e) => {
     if (!pullStart) return;
+    // Moving off the point means a pull, not a hold.
+    if (Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y) >= DRAG_THRESHOLD_PX) {
+      clearHoldTimer();
+    }
+    if (pullHeld) return;
     const from = (pullOnLine ? lineGrab!.points : pullPoints)[pullIndex]!;
     const to = map.mouseEventToLatLng(e);
     // Straight legs from the two points the stretch stays attached to, so it is
@@ -209,18 +246,23 @@ export function createMap(container: string): MapController {
 
   const endPull = (e: PointerEvent, commit: boolean) => {
     if (!pullStart) return;
+    clearHoldTimer();
     const moved = Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y);
     const index = pullIndex;
     const onLine = pullOnLine;
+    const held = pullHeld;
     pullStart = null;
     pullIndex = -1;
     pullOnLine = false;
     pullAnchors = null;
-    rubber?.remove();
-    rubber = null;
-    rubberPoint?.remove();
-    rubberPoint = null;
+    pullHeld = false;
+    clearRubber();
     map.dragging.enable();
+    // The long press already acted; swallow the release and its trailing click.
+    if (held) {
+      lastDragEnd = Date.now();
+      return;
+    }
     if (!commit) return;
     lastDragEnd = Date.now();
     const to = map.mouseEventToLatLng(e);
@@ -262,33 +304,40 @@ export function createMap(container: string): MapController {
         }).addTo(map),
       );
     },
-    setNodeMarkers(points) {
+    setNodeMarkers(points, marked) {
       nodeLayer?.remove();
       nodeLayer = null;
       if (points.length === 0) return;
       nodeLayer = L.layerGroup();
-      for (const p of points) {
+      points.forEach((p, i) => {
+        const on = marked?.has(i) === true;
         L.marker([p.lat, p.lon], {
           pane: EDIT_PANE,
           interactive: false,
-          icon: L.divIcon({ className: 'node-point', iconSize: [10, 10] }),
-        }).addTo(nodeLayer);
-      }
+          icon: L.divIcon({
+            className: on ? 'node-point marked' : 'node-point',
+            iconSize: on ? [16, 16] : [10, 10],
+          }),
+        }).addTo(nodeLayer!);
+      });
       nodeLayer.addTo(map);
     },
     armCourseDrag(points, handlers) {
       pullPoints = points;
       pullCb = handlers.onPull;
       grabCb = handlers.onGrab ?? null;
+      longPressCb = handlers.onLongPress ?? null;
       anchorsCb = handlers.anchors ?? null;
       lineGrab = handlers.line ?? null;
     },
     disarmCourseDrag() {
       pullCb = null;
       grabCb = null;
+      longPressCb = null;
       anchorsCb = null;
       lineGrab = null;
       pullPoints = [];
+      clearHoldTimer();
     },
     showEditWindow(points) {
       if (points.length === 0) return;

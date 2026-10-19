@@ -12,11 +12,13 @@
   </head>
   <body>
     <div id="map"></div>
+    <div id="course-tabs" role="tablist" aria-label="Courses found" hidden></div>
     <div id="edit-bar" hidden>
-      <button id="edit-exit" title="Exit editing" aria-label="Exit editing">✕</button>
+      <button id="edit-exit" title="Exit editing (Esc)" aria-label="Exit editing">✕</button>
       <button id="edit-undo" title="Undo the last edit">↶ Undo</button>
       <button id="edit-nodes" aria-pressed="false"
-        title="Node editing: pull a dot to move it, tap a dot to delete it, tap elsewhere to add one">Nodes</button>
+        title="Node editing: pull a dot to move it, tap a dot to delete it, hold one to mark it, tap elsewhere to add one">Nodes</button>
+      <button id="edit-delete" hidden title="Delete the marked points (Del)">Delete</button>
     </div>
     <div id="via-bar" hidden>
       <button id="via-cancel" title="Stop placing a via point" aria-label="Stop placing a via point">✕</button>
@@ -26,7 +28,6 @@
       <div id="sheet-top">
         <div id="sheet-handle" role="button" aria-label="Resize the panel" tabindex="0"></div>
         <button id="download-gpx" hidden title="Download GPX">GPX ⤓</button>
-        <div id="course-tabs" role="tablist" aria-label="Courses found" hidden></div>
       </div>
       <section id="controls">
         <h1>Profile Course</h1>

@@ -15,6 +15,7 @@ import { buildProfileFromSamples } from '../src/gpx/profile';
 import { beamSearch } from '../src/search/beam';
 import {
   deleteNodeFromPath,
+  deleteNodesFromPath,
   insertNodeIntoPath,
   moveNodeInPath,
   pathRoot,
@@ -109,6 +110,49 @@ describe('reroutePath', () => {
     expect(kept).not.toBeNull();
     expect(pathNodes(graph, kept!, pathRoot(graph, kept!))).toContain(viaNode);
   });
+
+  it('leaves the course outside the window exactly as it was', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const onCourse = new Set(pathNodes(graph, course.path, pathRoot(graph, course.path)));
+    const { dist } = dijkstra(graph, [startNode]);
+    let off = -1;
+    for (let i = 0; i < graph.nodeLat.length; i++) {
+      if (!onCourse.has(i) && dist[i]! > 200 && dist[i]! < 600) {
+        off = i;
+        break;
+      }
+    }
+    expect(off).toBeGreaterThanOrEqual(0);
+
+    const atM = 800;
+    const windowM = 300;
+    const rerouted = reroutePath(graph, course.path, atM, off, { windowM });
+    expect(rerouted).not.toBeNull();
+    const cum = cumLengths(course.path);
+    const n = course.path.edges.length;
+    let head = 0;
+    while (
+      head < Math.min(n, rerouted!.edges.length) &&
+      course.path.edges[head] === rerouted!.edges[head] &&
+      course.path.dirs[head] === rerouted!.dirs[head]
+    ) {
+      head++;
+    }
+    let tail = 0;
+    while (
+      tail < Math.min(n, rerouted!.edges.length) - head &&
+      course.path.edges[n - 1 - tail] === rerouted!.edges[rerouted!.edges.length - 1 - tail] &&
+      course.path.dirs[n - 1 - tail] === rerouted!.dirs[rerouted!.dirs.length - 1 - tail]
+    ) {
+      tail++;
+    }
+    // The first and last edge the reroute touched both lie inside the window,
+    // so every metre of course either side of it is untouched.
+    expect(cum[head]!).toBeGreaterThanOrEqual(atM - windowM);
+    expect(cum[n - tail]!).toBeLessThanOrEqual(atM + windowM);
+  });
 });
 
 describe('node editing', () => {
@@ -145,6 +189,40 @@ describe('node editing', () => {
     // A via on that node outranks the delete.
     expect(
       deleteNodeFromPath(graph, course.path, cum[at]!, { keepNodes: new Set([nodes[at]!]) }),
+    ).toBeNull();
+  });
+
+  it('deletes several marked nodes in one edit, round all of them', async () => {
+    const target = buildProfileFromSamples(new Float32Array(81), 2000);
+    const results = await beamSearch(graph, startNode, target, 2000, { seed: 3 });
+    const course = results[0]!;
+    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
+    const cum = cumLengths(course.path);
+    const count = (list: number[], node: number) => list.filter((n) => n === node).length;
+
+    // Two neighbours and one on its own: the pair has to be bypassed together,
+    // or the reconnection would route through the other one about to go.
+    const pair = spotAt(course.path, 700).at;
+    const lone = spotAt(course.path, 1400).at;
+    expect(lone).toBeGreaterThan(pair + 2);
+    const marked = [cum[pair]!, cum[pair + 1]!, cum[lone]!];
+
+    const trimmed = deleteNodesFromPath(graph, course.path, marked);
+    expect(trimmed).not.toBeNull();
+    const after = pathNodes(graph, trimmed!, pathRoot(graph, trimmed!));
+    expect(after[0]).toBe(nodes[0]);
+    expect(after[after.length - 1]).toBe(nodes[nodes.length - 1]);
+    for (const at of [pair, pair + 1, lone]) {
+      expect(count(after, nodes[at]!)).toBeLessThan(count(nodes, nodes[at]!));
+    }
+    // The survivors either side of each run are still on the course.
+    expect(after).toContain(nodes[pair - 1]!);
+    expect(after).toContain(nodes[pair + 2]!);
+    expect(assembleCourse(graph, trimmed!).lengthM).toBeGreaterThan(0);
+
+    // A via on any one of them keeps the whole batch.
+    expect(
+      deleteNodesFromPath(graph, course.path, marked, { keepNodes: new Set([nodes[lone]!]) }),
     ).toBeNull();
   });
 

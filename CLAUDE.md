@@ -126,8 +126,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
 - [x] **Editing mode**: persistent — pull the course where you want it, or tap a point then its
       destination, repeatedly until Exit editing. Exit (✕) and Undo sit over the map. Each
       reroute replaces an adjustable window (default ±600 m) of the *current* course, so edits
-      chain; the window start is chosen so the new point is reached near the km that was picked,
-      and the end so the course keeps its length. Via points outrank edits: the window shrinks
+      chain. Both ends of the replaced stretch must lie *inside* the window, so the course either
+      side of it is untouched to the metre — an edit the window cannot absorb is refused (with a
+      message saying to widen it) rather than allowed to rewrite the course outside the band the
+      preview drew. Which pair of in-window nodes is used is then decided by length alone (ties
+      to the shorter stretch): the dragged point no longer has to be reached at the km that was
+      picked, which was the old objective and is what let the splice wander outside the window.
+      Via points outrank edits: the window shrinks
       rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
@@ -142,8 +147,14 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       going there (falling back to routing through it only when that is the sole connection); an
       out-and-back spur drops both legs. Nothing outside the two touched legs ever moves, and the
       start/finish cannot be moved or deleted this way. Distances along the course are cumulative
-      haversine, never index × 25 m: each edge spreads its own samples, so the step is 25–50 m. Editing feedback also shows in a pill over the map, because
-      the sheet may be collapsed.
+      haversine, never index × 25 m: each edge spreads its own samples, so the step is 25–50 m.
+      *Holding* a dot marks it red instead of pulling it and reveals a Delete button; several can
+      be marked, and they go in one edit, because deleting them one at a time would route each
+      reconnection through the next node about to go. Neighbouring marked nodes are bypassed as
+      one run, by a single shortest path excluding all of them. Tapping a marked dot releases it;
+      Esc releases them all, Esc again leaves node submode, and Esc in plain editing leaves
+      editing — so the key always backs out exactly one step. Editing feedback also shows in a
+      pill over the map, because the sheet may be collapsed.
 - [x] **Multiple candidates**: a search offers up to 4 courses, each from a search of its own.
       Picking them out of one search's runners-up gave four near-copies leaving by the same
       street (on the test fixture the runners-up sit at 0.88–1.00 edge overlap with the winner),
@@ -156,10 +167,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       closes the ones nothing was found for. Run 0 is untouched by all this — it is the same
       search, improved from the same full candidate list, as before (picking before improving
       made the winner measurably worse, because improvement reorders the top candidates) — so
-      the first course lands no later than it used to. Tabs sit in the sticky sheet top,
-      labelled with the mismatch. Only the shown tab is filled blue; a course that has arrived
-      outlines itself in the accent colour and one still being searched for stays grey, so the
-      strip says what is ready without being read. 1–9 selects, and the arrows walk the strip
+      the first course lands no later than it used to. The tabs are a strip of browser tabs along
+      the top of the map, labelled with the mismatch: the shown one is white, taller and
+      accent-underlined, a course that has arrived but is not shown sits lower and greyer as if
+      behind it, and one still being searched for spins a ring beside its percentage — so the
+      strip says what is ready without being read. The strip itself is `pointer-events: none`
+      so the map stays usable between tabs, and it publishes its height as `--tab-strip-h`,
+      which pushes the edit/via bars and the status pill down. 1–9 selects, and the arrows walk the strip
       once a tab has focus. Switching leaves editing mode and marks the worker's cached path
       stale, so the next edit or improve re-matches. An edit, undo or improve rewrites the shown
       tab in place. The whole strip survives a reload (every course is persisted, with which one

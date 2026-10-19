@@ -117,6 +117,8 @@ export type MainToWorker =
       type: 'nodeEdit';
       op: 'move' | 'delete' | 'add';
       atKm: number;
+      /** Every node a delete should take, when several are marked at once. */
+      atKms?: number[];
       /** Where the node should sit; null for a delete. */
       to: LatLon | null;
       lats: Float64Array;

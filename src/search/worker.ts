@@ -25,7 +25,7 @@ import { dijkstra } from '../graph/dijkstra';
 import { matchTrackToGraph } from '../graph/match';
 import {
   DEFAULT_WINDOW_M,
-  deleteNodeFromPath,
+  deleteNodesFromPath,
   insertNodeIntoPath,
   moveNodeInPath,
   pathRoot,
@@ -594,7 +594,7 @@ async function editCourse(
     throw new Error(
       keep.nodes.size > 0
         ? 'Could not route through that point without dropping a via point'
-        : 'Could not route the course through that point',
+        : `Could not route through that point inside the ±${Math.round(windowM)} m window — widen it and try again`,
     );
   }
   postEdited(g, newPath, target, desiredMix, weightsIn);
@@ -603,6 +603,7 @@ async function editCourse(
 async function nodeEdit(
   op: 'move' | 'delete' | 'add',
   atKm: number,
+  atKms: number[] | undefined,
   to: LatLon | null,
   lats: Float64Array,
   lons: Float64Array,
@@ -619,10 +620,13 @@ async function nodeEdit(
   const options = { keepNodes: keep.nodes, keepEdges: keep.edges };
 
   if (op === 'delete') {
-    const newPath = deleteNodeFromPath(g, currentPath, atM, options);
+    const atMs = (atKms && atKms.length > 0 ? atKms : [atKm]).map((km) => km * 1000);
+    const newPath = deleteNodesFromPath(g, currentPath, atMs, options);
     if (!newPath) {
       throw new Error(
-        'That point stays: it is a via point, an end of the course, or the only way through',
+        atMs.length > 1
+          ? 'Those points stay: one of them is a via point, an end of the course, or the only way through'
+          : 'That point stays: it is a via point, an end of the course, or the only way through',
       );
     }
     postEdited(g, newPath, target, desiredMix, weightsIn);
@@ -779,6 +783,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       nodeEdit(
         msg.op,
         msg.atKm,
+        msg.atKms,
         msg.to,
         msg.lats,
         msg.lons,
