@@ -125,6 +125,49 @@ select {
   margin-bottom: 0;
 }
 
+/*
+ * Whole sections of the panel, not footnotes: a full-width row with a chevron,
+ * tall enough for a thumb. As small grey hint text they read as fine print and
+ * only the words themselves were tappable.
+ */
+details.section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  margin: 12px 0;
+  border: 1px solid GrayText;
+  border-radius: 8px;
+  background: color-mix(in srgb, CanvasText 7%, Canvas);
+  color: CanvasText;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+details.section > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.section > summary::after {
+  content: '\25b8';
+  display: inline-block;
+  margin-left: auto;
+  color: GrayText;
+  transition: transform 0.15s ease;
+}
+
+details.section[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+/* Room before the buttons that follow, open or shut. */
+#course-advanced {
+  margin-bottom: 14px;
+}
+
 button {
   width: 100%;
   min-height: 44px;

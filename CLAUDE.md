@@ -258,6 +258,22 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       reason the course is: one step of a ~30 m DEM grid is as much noise as slope. Mouse only
       (a finger has no hover, and on touch the course is for pulling), suppressed while a point
       is being pulled, and on its own marker and tooltip so it never clobbers the editing ones.
+      **The two hovers answer each other**: the chart has always marked the map, and the map now
+      moves the chart's crosshair too, so a hill can be found from either side. The crosshair a
+      map hover puts up is not a scrub — it sets no pick — or letting go over the chart
+      afterwards would commit a distance the user never chose while editing.
+- [ ] **Phase 6 – Strava, Garmin, GPS traces** (all opt-in; nothing is fetched until switched on):
+      - [x] Public **GPS traces** from OSM (`gps.tile.openstreetmap.org/lines/{z}/{x}/{y}.png`) as
+        a translucent overlay, under Advanced settings — where people actually run, which the
+        OSM network alone does not say.
+      - [x] A **Strava & Garmin** section: course/route import (both export GPX, so it is the
+        same map-match-and-score path as "compare your own course"), and a personal **Strava
+        heatmap** overlay. Strava's heatmap tiles are CloudFront-signed for one logged-in
+        account, so the URL template has to be pasted from the user's own browser; it lives in
+        the session on that device and expires. Strava's *API* is out of reach: the token
+        exchange needs a client secret, and a client-only app has nowhere to keep one.
+      - [ ] Course import straight from the services (needs the above resolved).
 
-- [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava
-      personal heatmap, OSM GPS traces.
+Panel sections (Offline areas, Strava & Garmin, Advanced settings) are `details.section`: a
+full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as
+fine print and left only the words themselves tappable.

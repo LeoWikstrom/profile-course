@@ -212,6 +212,9 @@ function persistSession(): void {
       returnToStart: returnToggle.checked,
       startAnywhere: startAnywhereToggle.checked,
       beamWidth: Number(beamWidthInput.value) || 200,
+      gpsTraces: gpsTracesToggle.checked,
+      heatmap: heatmapToggle.checked,
+      heatmapUrl: heatmapUrlInput.value.trim(),
       viaPoints,
       seed,
     },
@@ -238,9 +241,8 @@ function showResult(
   // The profile samples sit at exactly 25 m, the export points at 25–50 m, so
   // the marker has to be found by distance rather than by the same index.
   const cum = cumulativeM(points);
-  map.armHoverReadout(points, (at) => hoverReadout(points, cum, at));
   // The combined chart replaces the target-only chart at the top of the sheet.
-  renderInteractiveChart(
+  const chart = renderInteractiveChart(
     targetChart,
     result.profile.samples,
     result.course.samples,
@@ -256,6 +258,17 @@ function showResult(
     // the only way to say which pass of a stretch the course covers twice.
     (i) => chartPick?.((i * SAMPLE_STEP_M) / 1000),
   );
+  // Each hover answers the other: the chart already marks the map, and the map
+  // now marks the chart, so a hill under the cursor can be found either way.
+  map.armHoverReadout(points, (at) => {
+    if (at === null) {
+      chart.hideSample();
+      return '';
+    }
+    const m = metresAt(cum, at);
+    chart.showSample(Math.round(m / SAMPLE_STEP_M));
+    return hoverReadout(points, cum, at);
+  });
   renderResult(
     resultEls,
     result.course,
@@ -339,6 +352,13 @@ function indexAtM(cum: number[], m: number): number {
   return i;
 }
 
+/** Distance along the course at a fractional point index. */
+function metresAt(cum: number[], at: number): number {
+  const i = Math.floor(at);
+  const j = Math.min(i + 1, cum.length - 1);
+  return cum[i]! + (cum[j]! - cum[i]!) * (at - i);
+}
+
 /**
  * What the cursor is standing on, for the readout that follows the course:
  * distance, height above sea level and gradient. The gradient is taken over
@@ -353,7 +373,7 @@ function hoverReadout(
   const i = Math.floor(at);
   const j = Math.min(i + 1, points.length - 1);
   const f = at - i;
-  const m = cum[i]! + (cum[j]! - cum[i]!) * f;
+  const m = metresAt(cum, at);
   const ele = points[i]!.ele + (points[j]!.ele - points[i]!.ele) * f;
   const lo = indexAtM(cum, Math.max(0, m - 50));
   const hi = indexAtM(cum, m + 50);
@@ -1093,6 +1113,10 @@ rangeTo.addEventListener('input', () => {
 });
 
 const compareInput = document.getElementById('compare-input') as HTMLInputElement;
+const externalGpxInput = document.getElementById('external-gpx') as HTMLInputElement;
+const gpsTracesToggle = document.getElementById('gps-traces') as HTMLInputElement;
+const heatmapToggle = document.getElementById('heatmap-toggle') as HTMLInputElement;
+const heatmapUrlInput = document.getElementById('heatmap-url') as HTMLInputElement;
 const viaList = document.getElementById('via-list') as HTMLUListElement;
 const addViaButton = document.getElementById('add-via') as HTMLButtonElement;
 const viaBar = document.getElementById('via-bar') as HTMLDivElement;
@@ -1248,8 +1272,8 @@ function sendImproveMatched(): void {
   });
 }
 
-compareInput.addEventListener('change', async () => {
-  const file = compareInput.files?.[0];
+/** Loads someone's own course — exported from anywhere — to score and edit. */
+async function importCourseGpx(file: File | undefined): Promise<void> {
   const profile = activeProfile();
   if (!file) return;
   if (!profile) {
@@ -1271,7 +1295,10 @@ compareInput.addEventListener('change', async () => {
   } catch (err) {
     startHint.textContent = err instanceof Error ? err.message : String(err);
   }
-});
+}
+
+compareInput.addEventListener('change', () => void importCourseGpx(compareInput.files?.[0]));
+externalGpxInput.addEventListener('change', () => void importCourseGpx(externalGpxInput.files?.[0]));
 
 gpxInput.addEventListener('change', async () => {
   const file = gpxInput.files?.[0];
@@ -1337,6 +1364,45 @@ findButton.addEventListener('click', () => {
 
 beamWidthInput.addEventListener('change', persistSession);
 
+/**
+ * Tiles from elsewhere, each switched on by hand: public GPS traces are
+ * everyone's, from OSM, while Strava's heatmap tiles are signed for one
+ * account and so can only come from the user's own logged-in browser.
+ */
+const GPS_TRACES_URL = 'https://gps.tile.openstreetmap.org/lines/{z}/{x}/{y}.png';
+
+function applyOverlays(): void {
+  map.setOverlay(
+    'gps-traces',
+    gpsTracesToggle.checked
+      ? {
+          url: GPS_TRACES_URL,
+          maxNativeZoom: 20,
+          opacity: 0.7,
+          attribution: 'GPS traces &copy; OpenStreetMap contributors',
+        }
+      : null,
+  );
+  const url = heatmapUrlInput.value.trim();
+  const usable = url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
+  map.setOverlay(
+    'heatmap',
+    heatmapToggle.checked && usable
+      ? { url, maxNativeZoom: 16, opacity: 0.7, attribution: 'Heatmap &copy; Strava' }
+      : null,
+  );
+  if (heatmapToggle.checked && !usable) {
+    startHint.textContent = 'Paste a heatmap tile URL with {z}, {x} and {y} in it.';
+  }
+}
+
+for (const el of [gpsTracesToggle, heatmapToggle, heatmapUrlInput]) {
+  el.addEventListener('change', () => {
+    applyOverlays();
+    persistSession();
+  });
+}
+
 coordSet.addEventListener('click', () => {
   const lat = Number(coordLat.value);
   const lon = Number(coordLon.value);
@@ -1358,6 +1424,10 @@ async function boot(): Promise<void> {
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
     if (session.settings.beamWidth) beamWidthInput.value = String(session.settings.beamWidth);
+    gpsTracesToggle.checked = session.settings.gpsTraces ?? false;
+    heatmapToggle.checked = session.settings.heatmap ?? false;
+    heatmapUrlInput.value = session.settings.heatmapUrl ?? '';
+    applyOverlays();
     viaPoints = session.settings.viaPoints ?? [];
     renderVias();
     if (session.profile) setFullProfile(session.profile);

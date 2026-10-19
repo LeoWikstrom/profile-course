@@ -2,12 +2,20 @@ import { SAMPLE_STEP_M } from '../gpx/profile';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** Drives the crosshair from outside, for a cursor that is over the map. */
+export interface ChartHandle {
+  showSample(sampleIndex: number): void;
+  hideSample(): void;
+}
+
 /**
  * Overlaid target/course chart where touching or dragging shows a crosshair
  * with distance, elevation and grade, and reports the sample index so the
  * matching point can be highlighted on the map. `course` may be null, which
  * leaves the race profile alone but still scrubbable. `onCommit` makes the
  * chart a picker: scrub to a distance, let go, and that sample is chosen.
+ * The returned handle points the crosshair at a sample without reporting it
+ * back, so hovering the map can show the same point here.
  */
 export function renderInteractiveChart(
   container: HTMLElement,
@@ -17,7 +25,7 @@ export function renderInteractiveChart(
   onCommit?: ((sampleIndex: number) => void) | null,
   width = 360,
   height = 140,
-): void {
+): ChartHandle {
   container.textContent = '';
 
   let min = Infinity;
@@ -107,11 +115,8 @@ export function renderInteractiveChart(
   /** The sample under the finger, for `onCommit` to take on release. */
   let at: number | null = null;
 
-  function show(clientX: number): void {
-    const rect = svg.getBoundingClientRect();
-    const fx = ((clientX - rect.left) / rect.width) * width;
-    let i = Math.round((((fx - pad) / (width - 2 * pad)) * maxDist) / SAMPLE_STEP_M);
-    i = Math.max(0, Math.min(i, (course ?? target).length - 1));
+  function draw(sampleIndex: number): number {
+    const i = Math.max(0, Math.min(sampleIndex, (course ?? target).length - 1));
     const cx = x(i);
     crosshair.setAttribute('x1', String(cx));
     crosshair.setAttribute('x2', String(cx));
@@ -141,8 +146,15 @@ export function renderInteractiveChart(
     targetText.setAttribute('x', tx);
 
     for (const el of shown) el.setAttribute('visibility', 'visible');
-    at = i;
-    onPoint(i);
+    return i;
+  }
+
+  function show(clientX: number): void {
+    const rect = svg.getBoundingClientRect();
+    const fx = ((clientX - rect.left) / rect.width) * width;
+    const i = Math.round((((fx - pad) / (width - 2 * pad)) * maxDist) / SAMPLE_STEP_M);
+    at = draw(i);
+    onPoint(at);
   }
 
   /** `keepPoint` leaves the map's marker up, because a commit just claimed it. */
@@ -176,4 +188,15 @@ export function renderInteractiveChart(
   });
 
   container.appendChild(svg);
+
+  return {
+    showSample(sampleIndex) {
+      // No `at`: a crosshair the map put here is not a scrub, so letting go
+      // over the chart afterwards must not commit this distance as a pick.
+      draw(sampleIndex);
+    },
+    hideSample() {
+      hide(true);
+    },
+  };
 }

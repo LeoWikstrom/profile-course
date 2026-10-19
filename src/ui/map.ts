@@ -94,12 +94,29 @@ export interface MapController {
   /**
    * A translucent point that follows the cursor along the course, with
    * `describe`'s text in a pill above it. `at` is a fractional index into
-   * `points`, so the readout slides between them instead of hopping.
+   * `points`, so the readout slides between them instead of hopping; it is
+   * null when the cursor leaves the course, so the caller can take its own
+   * readout down (the chart's crosshair follows this one).
    */
-  armHoverReadout(points: LatLon[], describe: (at: number) => string): void;
+  armHoverReadout(points: LatLon[], describe: (at: number | null) => string): void;
   disarmHoverReadout(): void;
   /** Abandon a pull in progress without committing it; true if there was one. */
   cancelPull(): boolean;
+  /**
+   * Switches a named raster overlay on (a spec) or off (null). Both overlays
+   * are third-party tiles the user opts into, so none is added by default.
+   */
+  setOverlay(id: string, spec: OverlaySpec | null): void;
+}
+
+export interface OverlaySpec {
+  /** Tile URL template with {z}/{x}/{y}. */
+  url: string;
+  maxZoom?: number;
+  /** Deepest zoom the source has tiles for; deeper zooms upscale them. */
+  maxNativeZoom?: number;
+  opacity?: number;
+  attribution?: string;
 }
 
 export function createMap(container: string): MapController {
@@ -113,6 +130,8 @@ export function createMap(container: string): MapController {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
+
+  const overlays = new Map<string, L.TileLayer>();
 
   let marker: L.Marker | null = null;
   let circle: L.Circle | null = null;
@@ -227,15 +246,17 @@ export function createMap(container: string): MapController {
   }
 
   let hoverPoints: LatLon[] = [];
-  let hoverDescribe: ((at: number) => string) | null = null;
+  let hoverDescribe: ((at: number | null) => string) | null = null;
   let hoverMarker: L.Marker | null = null;
   let hoverLabel: L.Tooltip | null = null;
 
   function hideHover(): void {
+    const wasShown = hoverMarker !== null;
     hoverMarker?.remove();
     hoverMarker = null;
     hoverLabel?.remove();
     hoverLabel = null;
+    if (wasShown) hoverDescribe?.(null);
   }
 
   function clearRubber(): void {
@@ -701,6 +722,20 @@ export function createMap(container: string): MapController {
       hoverPoints = [];
       hoverDescribe = null;
       hideHover();
+    },
+    setOverlay(id, spec) {
+      overlays.get(id)?.remove();
+      overlays.delete(id);
+      if (!spec) return;
+      // Added after the base map, so it sits over it; everything the app draws
+      // is in panes above the tiles either way.
+      const layer = L.tileLayer(spec.url, {
+        maxZoom: spec.maxZoom ?? 19,
+        maxNativeZoom: spec.maxNativeZoom,
+        opacity: spec.opacity ?? 1,
+        attribution: spec.attribution,
+      }).addTo(map);
+      overlays.set(id, layer);
     },
     cancelPull() {
       if (!pullStart) return false;
