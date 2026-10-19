@@ -185,7 +185,10 @@ function persistSession(): void {
       viaPoints,
       seed,
     },
-    result: lastResult,
+    // Courses arrive in tab order, so the filled slots are always a prefix and
+    // dropping the empty ones leaves the shown index pointing at the same one.
+    results: candidates.filter((c) => c !== null),
+    shown: shownCandidate,
   });
 }
 
@@ -1165,10 +1168,14 @@ async function boot(): Promise<void> {
     if (session.profile) setFullProfile(session.profile);
     if (session.settings.start) map.setStart(session.settings.start);
     radiusSlider.dispatchEvent(new Event('input'));
-    if (session.result) {
-      // Only the shown course is persisted, so a reload comes back one-tabbed.
-      replaceShownCandidate(session.result);
-      showResult(session.result);
+    const results = session.results ?? [];
+    if (results.length > 0) {
+      candidates = results;
+      candidateProgress = results.map(() => 1);
+      shownCandidate = Math.min(session.shown ?? 0, results.length - 1);
+      lastResult = candidates[shownCandidate]!;
+      showResult(lastResult);
+      drawCourseTabs();
     }
   }
   // Explicit URL parameters win over the restored session.

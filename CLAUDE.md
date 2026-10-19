@@ -157,10 +157,12 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       search, improved from the same full candidate list, as before (picking before improving
       made the winner measurably worse, because improvement reorders the top candidates) — so
       the first course lands no later than it used to. Tabs sit in the sticky sheet top,
-      labelled with the mismatch; unselected ones are quiet outlines against the app's solid
-      blue so the selected one is obvious; 1–9 selects, and the arrows walk the strip once a
-      tab has focus. Switching leaves editing mode and marks the
-      worker's cached path stale, so the next edit or improve re-matches. An edit, undo or
-      improve rewrites the shown tab in place; only the shown course is persisted or shared.
+      labelled with the mismatch. Only the shown tab is filled blue; a course that has arrived
+      outlines itself in the accent colour and one still being searched for stays grey, so the
+      strip says what is ready without being read. 1–9 selects, and the arrows walk the strip
+      once a tab has focus. Switching leaves editing mode and marks the worker's cached path
+      stale, so the next edit or improve re-matches. An edit, undo or improve rewrites the shown
+      tab in place. The whole strip survives a reload (every course is persisted, with which one
+      was shown); only the shown course goes into the URL hash.
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava
       personal heatmap, OSM GPS traces.

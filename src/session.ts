@@ -21,8 +21,14 @@ export interface SessionState {
   profile: TargetProfile | null;
   gpxLabel: string | null;
   settings: SessionSettings;
-  /** Last generated course plus the exact profile it was scored against. */
-  result: { course: CourseResult; profile: TargetProfile } | null;
+  /**
+   * The search's courses, one per tab, each with the exact profile it was
+   * scored against. Written by a version that only kept the shown one, so it
+   * may be missing.
+   */
+  results?: { course: CourseResult; profile: TargetProfile }[];
+  /** Which of `results` was on screen. */
+  shown?: number;
 }
 
 const KEY = 'session:v1';

@@ -250,6 +250,10 @@ button:not(:disabled) {
   display: flex;
   gap: 4px;
   overflow-x: auto;
+  /* Clear of the drag handle: a tab right under it is easy to hit by mistake
+     while reaching for the handle. The right padding keeps the last tab clear
+     of the GPX button. */
+  margin-top: 10px;
   padding: 0 92px 6px 0;
   scrollbar-width: none;
 }
@@ -259,7 +263,9 @@ button:not(:disabled) {
 }
 
 /* Every other button in the app is solid blue, so the strip would read as all
-   selected: the unselected tabs are quiet outlines instead. */
+   selected: only the shown tab is filled. A course that has arrived outlines
+   itself in the accent colour, one still being searched for stays grey, so
+   the strip says at a glance what is ready without being read. */
 #course-tabs > button {
   width: auto;
   min-height: 30px;
@@ -267,8 +273,8 @@ button:not(:disabled) {
   font-size: 0.8rem;
   white-space: nowrap;
   background: Canvas;
-  color: GrayText;
-  border-color: color-mix(in srgb, GrayText 50%, transparent);
+  color: #2563eb;
+  border-color: #2563eb;
 }
 
 #course-tabs > button[aria-selected='true'] {
@@ -280,6 +286,8 @@ button:not(:disabled) {
 
 #course-tabs > button:disabled {
   font-style: italic;
+  color: GrayText;
+  border-color: color-mix(in srgb, GrayText 50%, transparent);
 }
 
 #course-actions > button {
