@@ -134,6 +134,12 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       point no longer has to be reached at the km that was picked, which was the old objective
       and is what let the splice wander outside the window. An edit is refused only when no node
       inside the window can reach the tapped point within the Dijkstra budget (4 × the window).
+      The window is a **radius as well as a distance**: where the course laps, ground a long way
+      round comes back within reach along the course, and replacing the stretch between two such
+      nodes rewrote a whole lap nowhere near the drag. So the stretch runs out from the drag only
+      until the course first leaves a `windowM` circle round it (the two nodes either side always
+      count, since one edge can be longer than the radius). The drawn window and the rubber band
+      follow the same rule, so the band never promises more than it keeps.
       Via points outrank edits: the window shrinks
       rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
@@ -143,7 +149,8 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       of a stretch the course covers twice used to collapse to whichever was a hair nearer, and
       one of them was simply unreachable. Two ways in now, both keeping the plain tap and pull
       untouched: *holding* a point where the course passes more than once offers each pass in
-      turn every 2 s, with the km and "pass n of m" in the status pill and a short vibration on
+      turn every 2 s, with the km and "pass n of m" in a pill *above the point itself* (the eye
+      is on the point, not on the status bar at the side) and a short vibration on
       each switch, and the drag or release then means the pass last offered — crossing the drag
       threshold stops the cycling, so a pull is never stolen by a switch mid-gesture. Passes are
       told apart by index gap among the grab points (≥ 8 apart is a second pass, closer is one
@@ -169,9 +176,11 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       be marked, and they go in one edit, because deleting them one at a time would route each
       reconnection through the next node about to go. Neighbouring marked nodes are bypassed as
       one run, by a single shortest path excluding all of them. Tapping a marked dot releases it;
-      Esc releases them all, Esc again leaves node submode, and Esc in plain editing leaves
-      editing — so the key always backs out exactly one step. Editing feedback also shows in a
-      pill over the map, because the sheet may be collapsed.
+      Esc backs out exactly one step, innermost first: a pull in progress or a half-finished
+      two-tap edit (dropped with the course untouched, still in editing mode), then the marks,
+      then node submode, then editing itself. Editing feedback also shows in a
+      pill over the map, because the sheet may be collapsed — and on desktop that pill, the edit
+      bar and the via bar all start beside the left panel, not over it.
 - [x] **Multiple candidates**: a search offers up to 4 courses, each from a search of its own.
       Picking them out of one search's runners-up gave four near-copies leaving by the same
       street (on the test fixture the runners-up sit at 0.88–1.00 edge overlap with the winner),
@@ -184,9 +193,10 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       closes the ones nothing was found for. Run 0 is untouched by all this — it is the same
       search, improved from the same full candidate list, as before (picking before improving
       made the winner measurably worse, because improvement reorders the top candidates) — so
-      the first course lands no later than it used to. The tabs are a strip of browser tabs along
-      the top of the map, labelled with the mismatch: the shown one is white, taller and
-      accent-underlined, a course that has arrived but is not shown sits lower and greyer as if
+      the first course lands no later than it used to. The tabs are a strip of browser tabs dropping
+      from the top of the window over the map, labelled with the mismatch: the shown one is
+      accent filled, hangs lower and overlaps the tabs either side of it with a drop shadow, a
+      course that has arrived but is not shown sits shorter and greyer as if
       behind it, and one still being searched for spins a ring beside its percentage — so the
       strip says what is ready without being read. The strip itself is `pointer-events: none`
       so the map stays usable between tabs, and it publishes its height as `--tab-strip-h`,

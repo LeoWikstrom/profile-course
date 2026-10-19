@@ -250,9 +250,9 @@ button:not(:disabled) {
   z-index: 1;
 }
 
-/* One tab per course the search kept, as a strip of browser tabs along the top
-   of the map. The strip itself lets taps through; only the tabs catch them, so
-   the map stays usable in the gaps. The right padding clears the zoom control. */
+/* One tab per course the search kept, hanging from the top edge of the window
+   over the map. The strip itself lets taps through; only the tabs catch them,
+   so the map stays usable round them. Right padding clears the zoom control. */
 #course-tabs {
   position: fixed;
   top: 0;
@@ -260,10 +260,10 @@ button:not(:disabled) {
   right: 0;
   z-index: 1100;
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: flex-start;
+  gap: 0;
   height: 42px;
-  padding: 6px 52px 0 8px;
+  padding: 0 52px 0 8px;
   overflow-x: auto;
   scrollbar-width: none;
   pointer-events: none;
@@ -273,9 +273,10 @@ button:not(:disabled) {
   display: none;
 }
 
-/* Browser tabs: the shown one is white, full height and in front; a course
-   that has arrived but is not shown sits lower and greyer, as if behind it;
-   one still being searched for spins instead of showing a mismatch. */
+/* Browser tabs dropped from the top: the shown one is accent-coloured, hangs
+   lower and overlaps its neighbours; a course that has arrived but is not shown
+   sits shorter and greyer, as if behind it; one still being searched for spins
+   instead of showing a mismatch. */
 #course-tabs > button {
   pointer-events: auto;
   width: auto;
@@ -283,25 +284,29 @@ button:not(:disabled) {
   padding: 0 12px;
   font-size: 0.8rem;
   white-space: nowrap;
-  border-radius: 10px 10px 0 0;
+  border-radius: 0 0 10px 10px;
   border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-bottom: none;
+  border-top: none;
   background: color-mix(in srgb, CanvasText 14%, Canvas);
   color: GrayText;
-  box-shadow: inset 0 -8px 10px -8px rgb(0 0 0 / 0.35);
+  box-shadow: inset 0 8px 10px -8px rgb(0 0 0 / 0.35);
   transition:
     min-height 0.12s ease,
     background-color 0.15s ease;
 }
 
 #course-tabs > button[aria-selected='true'] {
-  min-height: 36px;
-  background: Canvas;
-  color: #2563eb;
-  border-color: #2563eb;
-  border-bottom: 3px solid #2563eb;
+  /* Overlapping its neighbours is what puts it in front of them. */
+  min-height: 38px;
+  margin: 0 -5px;
+  padding: 0 16px;
+  position: relative;
+  z-index: 1;
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
   font-weight: 600;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.3);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
 }
 
 #course-tabs > button:disabled {
@@ -457,6 +462,24 @@ progress {
   animation: marker-in 0.18s ease-out;
 }
 
+/* What the gesture is about to do, said over the point it will do it to —
+   which pass of a doubled stretch is on offer while a press cycles them. */
+.leaflet-tooltip.point-pill {
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+  background: #7c3aed;
+  border: none;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  white-space: nowrap;
+}
+
+.leaflet-tooltip.point-pill::before {
+  border-top-color: #7c3aed;
+}
+
 /* Held down to mark it for deletion: red, like the Delete button waiting. */
 .node-point.marked {
   background: #dc2626;
@@ -491,8 +514,12 @@ progress {
     position: static;
     min-height: 44px;
   }
-  /* The sheet is a fixed left panel here, so the strip starts beside it. */
-  #course-tabs {
+  /* The sheet is a fixed left panel here, so everything over the map starts
+     beside it — otherwise the edit bar sits on top of the panel. */
+  #course-tabs,
+  #edit-bar,
+  #via-bar,
+  #edit-status {
     left: 388px;
   }
 }

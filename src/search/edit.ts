@@ -1,6 +1,7 @@
 import { dijkstra, reconstructPath, type EdgePath } from '../graph/dijkstra';
 import { pathNodes } from '../graph/ksp';
 import type { Graph } from '../graph/types';
+import { haversineMeters } from '../shared/geo';
 import type { CoursePath } from './score';
 
 export const DEFAULT_WINDOW_M = 600;
@@ -34,12 +35,13 @@ function reversed(leg: EdgePath): EdgePath {
 /**
  * Reroute the course around `atM` so it passes through `targetNode`: the
  * stretch between two course nodes is replaced by shortest paths from the
- * first to the target and on to the second. Both of those nodes must lie
- * within `windowM` of `atM`, so the course outside the window keeps its exact
- * shape and length; the stretch between them is free to come out longer or
- * shorter, which only shifts the km marks after it. The dragged point no longer
- * has to be reached at the km that was picked. Returns null when no node inside
- * the window can reach the target at all.
+ * first to the target and on to the second. Both of those nodes must lie within
+ * `windowM` of `atM` along the course *and* within `windowM` of the drag as the
+ * crow flies, so the course outside the window keeps its exact shape and length
+ * and a lap that passes back by is left alone; the stretch between them is free
+ * to come out longer or shorter, which only shifts the km marks after it. The
+ * dragged point no longer has to be reached at the km that was picked. Returns
+ * null when no node inside the window can reach the target at all.
  */
 export function reroutePath(
   graph: Graph,
@@ -84,6 +86,27 @@ export function reroutePath(
   while (windowLow < atIdx && cum[windowLow]! < at - windowM) windowLow++;
   let windowHigh = highTo;
   while (windowHigh > atIdx && cum[windowHigh]! > at + windowM) windowHigh--;
+
+  // Where the course laps, ground a long way round the course comes back within
+  // the window's reach, and replacing the stretch between two such nodes would
+  // rewrite a whole lap — nowhere near the point being dragged, however close
+  // along the course it is. So the window is a radius as well as a distance:
+  // the stretch runs out from the drag until the course first leaves it.
+  const nearDrag = (i: number): boolean =>
+    haversineMeters(
+      graph.nodeLat[nodes[atIdx]!]!,
+      graph.nodeLon[nodes[atIdx]!]!,
+      graph.nodeLat[nodes[i]!]!,
+      graph.nodeLon[nodes[i]!]!,
+    ) <= windowM;
+  // The nodes either side go in regardless: on a sparse network one edge can be
+  // longer than the whole radius, and there has to be a stretch to replace.
+  let low = Math.max(windowLow, atIdx - 1);
+  while (low > windowLow && nearDrag(low - 1)) low--;
+  windowLow = low;
+  let high = Math.min(windowHigh, atIdx + 1);
+  while (high < windowHigh && nearDrag(high + 1)) high++;
+  windowHigh = high;
 
   let fromIdx = -1;
   let toIdx = -1;

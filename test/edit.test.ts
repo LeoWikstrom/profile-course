@@ -22,6 +22,7 @@ import {
   reroutePath,
 } from '../src/search/edit';
 import { assembleCourse } from '../src/search/score';
+import { haversineMeters } from '../src/shared/geo';
 import { FixtureSampler } from './helpers/fixtureSampler';
 
 let graph: Graph;
@@ -152,6 +153,24 @@ describe('reroutePath', () => {
     // so every metre of course either side of it is untouched.
     expect(cum[head]!).toBeGreaterThanOrEqual(atM - windowM);
     expect(cum[n - tail]!).toBeLessThanOrEqual(atM + windowM);
+
+    // And both are near the drag on the ground, not only along the course: on a
+    // lapping course the two are not the same thing, and a stretch that comes
+    // back past the drag must not drag a whole lap into the edit.
+    const nodes = pathNodes(graph, course.path, pathRoot(graph, course.path));
+    let atIdx = 0;
+    for (let i = 1; i < nodes.length; i++) {
+      if (Math.abs(cum[i]! - atM) < Math.abs(cum[atIdx]! - atM)) atIdx = i;
+    }
+    const fromDrag = (i: number) =>
+      haversineMeters(
+        graph.nodeLat[nodes[atIdx]!]!,
+        graph.nodeLon[nodes[atIdx]!]!,
+        graph.nodeLat[nodes[i]!]!,
+        graph.nodeLon[nodes[i]!]!,
+      );
+    expect(fromDrag(head)).toBeLessThanOrEqual(windowM);
+    expect(fromDrag(n - tail)).toBeLessThanOrEqual(windowM);
   });
 });
 

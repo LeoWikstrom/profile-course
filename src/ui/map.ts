@@ -79,6 +79,11 @@ export interface MapController {
   clearCourse(): void;
   showCoursePoint(point: LatLon): void;
   hideCoursePoint(): void;
+  /** A pill above a point on the map, for what the gesture is about to do. */
+  showPointLabel(point: LatLon, text: string): void;
+  hidePointLabel(): void;
+  /** Abandon a pull in progress without committing it; true if there was one. */
+  cancelPull(): boolean;
 }
 
 export function createMap(container: string): MapController {
@@ -136,6 +141,7 @@ export function createMap(container: string): MapController {
 
   let courseLayer: L.LayerGroup | null = null;
   let pointMarker: L.Marker | null = null;
+  let pointLabel: L.Tooltip | null = null;
   let viaMarkers: L.Marker[] = [];
   let editMarkers: L.Marker[] = [];
   let nodeLayer: L.LayerGroup | null = null;
@@ -178,6 +184,11 @@ export function createMap(container: string): MapController {
     if (cycleTimer === null) return;
     clearInterval(cycleTimer);
     cycleTimer = null;
+  }
+
+  function hidePointLabel(): void {
+    pointLabel?.remove();
+    pointLabel = null;
   }
 
   function clearRubber(): void {
@@ -319,6 +330,8 @@ export function createMap(container: string): MapController {
     pullAnchors = null;
     pullHeld = false;
     clearRubber();
+    // The pass pill belongs to the gesture; the status pill carries the km on.
+    hidePointLabel();
     map.dragging.enable();
     // The long press already acted; swallow the release and its trailing click.
     if (held) {
@@ -511,6 +524,38 @@ export function createMap(container: string): MapController {
     hideCoursePoint() {
       pointMarker?.remove();
       pointMarker = null;
+    },
+    showPointLabel(point, text) {
+      if (!pointLabel) {
+        pointLabel = L.tooltip({
+          permanent: true,
+          direction: 'top',
+          offset: [0, -12],
+          className: 'point-pill',
+          interactive: false,
+        }).setLatLng([point.lat, point.lon]);
+        pointLabel.addTo(map);
+      } else {
+        pointLabel.setLatLng([point.lat, point.lon]);
+      }
+      pointLabel.setContent(text);
+    },
+    hidePointLabel,
+    cancelPull() {
+      if (!pullStart) return false;
+      clearHoldTimer();
+      clearCycleTimer();
+      clearRubber();
+      hidePointLabel();
+      pullStart = null;
+      pullIndex = -1;
+      pullOnLine = false;
+      pullAnchors = null;
+      pullHeld = false;
+      map.dragging.enable();
+      // The release still to come must not be read as a tap on the course.
+      lastDragEnd = Date.now();
+      return true;
     },
     getStart() {
       if (!marker) return null;

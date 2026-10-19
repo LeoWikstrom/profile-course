@@ -146,7 +146,16 @@ window.addEventListener('keydown', (e) => {
     focus instanceof HTMLTextAreaElement ||
     focus instanceof HTMLSelectElement;
   if (e.key === 'Escape') {
-    if (!viaBar.hidden) {
+    // A pull in progress is the innermost thing to back out of: drop it and
+    // stay in editing mode, with the course exactly as it was.
+    if (map.cancelPull() || (editingMode && awaitingDestination)) {
+      awaitingDestination = false;
+      map.hideCoursePoint();
+      map.hidePointLabel();
+      map.hideEditWindow();
+      if (lastResult && editingMode) armEditing(lastResult);
+      setEditStatus('Edit cancelled.');
+    } else if (!viaBar.hidden) {
       map.disarmViaPlacement();
       endViaPlacement();
       startHint.textContent = 'Via point not placed.';
@@ -217,6 +226,8 @@ function persistSession(): void {
 
 /** Takes a distance picked on the chart while editing; null when not editing. */
 let chartPick: ((km: number) => void) | null = null;
+/** Halfway through the two-tap flow: a km is chosen, the destination is not. */
+let awaitingDestination = false;
 
 function showResult(
   result: { course: CourseResult; profile: TargetProfile },
@@ -366,10 +377,16 @@ function editWindowPoints(
 ): { lat: number; lon: number }[] {
   const at = atKm * 1000;
   const half = rerouteWindowM();
-  let from = 0;
-  let to = points.length - 1;
-  while (from < to && cum[from]! < at - half) from++;
-  while (to > from && cum[to]! > at + half) to--;
+  const mid = indexAtM(cum, at);
+  const anchor = points[mid]!;
+  // The same rule the reroute uses: half a window along the course, and no
+  // further than that from the drag, so a lap coming back by stays outside it.
+  const near = (i: number) =>
+    haversineMeters(anchor.lat, anchor.lon, points[i]!.lat, points[i]!.lon) <= half;
+  let from = mid;
+  while (from > 0 && cum[from - 1]! >= at - half && near(from - 1)) from--;
+  let to = mid;
+  while (to < points.length - 1 && cum[to + 1]! <= at + half && near(to + 1)) to++;
   return points.slice(from, to + 1);
 }
 
@@ -422,6 +439,9 @@ function exitEditing(): void {
   editingMode = false;
   nodeMode = false;
   chartPick = null;
+  awaitingDestination = false;
+  map.cancelPull();
+  map.hidePointLabel();
   map.disarmViaPlacement();
   map.disarmCourseDrag();
   map.hideCoursePoint();
@@ -484,8 +504,10 @@ function beginEdit(
   editHistory.push(result);
   editedPoints.push(marker);
   pendingEdit = true;
+  awaitingDestination = false;
   drawEditMarkers();
   map.hideCoursePoint();
+  map.hidePointLabel();
   map.hideEditWindow();
 }
 
@@ -572,6 +594,8 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
     return leg;
   };
   drawEditMarkers();
+  awaitingDestination = false;
+  map.hidePointLabel();
   // An edit rewrites the node list, so marks made against the old one are gone.
   markedNodes.clear();
   map.setNodeMarkers(nodes ?? [], markedNodes);
@@ -579,6 +603,7 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
 
   /** First half of the two-tap flow: the km to edit at is settled, the destination is not. */
   const selectOrigin = (atKm: number, marker: { lat: number; lon: number }) => {
+    awaitingDestination = true;
     map.showCoursePoint(marker);
     previewEditWindow(points, cum, atKm);
     // While waiting for the destination, a tap near the course must not be
@@ -590,6 +615,7 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
         : `Editing near km ${atKm.toFixed(2)} — tap where the course should go…`,
     );
     map.armViaPlacement((to) => {
+      awaitingDestination = false;
       if (nodeMode) sendNodeEdit(result, 'move', atKm, to);
       else sendEdit(result, atKm, to);
     });
@@ -617,15 +643,13 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
       else selectDestination(index);
     },
     onGrab: (index) => previewEditWindow(points, cum, kmAt(index)),
+    // Which pass is on offer belongs over the point itself, not in the pill at
+    // the side: the point is what the eye is on while the passes take turns.
     onCycle: (index, pass, passes) => {
       const atKm = kmAt(index);
       previewEditWindow(points, cum, atKm);
       map.showCoursePoint(grabPoints[index]!);
-      setEditStatus(
-        nodeMode
-          ? `km ${atKm.toFixed(2)} — pass ${pass + 1} of ${passes}. Keep holding to switch, then pull to move it or let go to delete it.`
-          : `km ${atKm.toFixed(2)} — pass ${pass + 1} of ${passes}. Keep holding to switch, then pull it or let go to pick it.`,
-      );
+      map.showPointLabel(grabPoints[index]!, `km ${atKm.toFixed(2)} · pass ${pass + 1}/${passes}`);
     },
     ...(nodes
       ? {
