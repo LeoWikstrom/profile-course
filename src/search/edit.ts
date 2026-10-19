@@ -35,11 +35,11 @@ function reversed(leg: EdgePath): EdgePath {
  * Reroute the course around `atM` so it passes through `targetNode`: the
  * stretch between two course nodes is replaced by shortest paths from the
  * first to the target and on to the second. Both of those nodes must lie
- * within `windowM` of `atM`, so the course outside the window is left exactly
- * as it was — an edit the window cannot absorb is refused rather than allowed
- * to rewrite the course either side of it. Which pair inside the window is
- * used is then decided by length alone: the dragged point no longer has to be
- * reached at the km that was picked. Returns null when no route exists.
+ * within `windowM` of `atM`, so the course outside the window keeps its exact
+ * shape and length; the stretch between them is free to come out longer or
+ * shorter, which only shifts the km marks after it. The dragged point no longer
+ * has to be reached at the km that was picked. Returns null when no node inside
+ * the window can reach the target at all.
  */
 export function reroutePath(
   graph: Graph,
@@ -95,8 +95,10 @@ export function reroutePath(
       const back = tree.dist[nodes[j]!]!;
       if (!Number.isFinite(back)) continue;
       const span = cum[j]! - cum[i]!;
-      // The pair that changes the course's length least; ties go to the
-      // shorter stretch, so an edit rewrites as little as it can.
+      // A detour costing about what the stretch it replaces cost, so the
+      // course bulges out to the point; a pair any tighter than the two legs
+      // makes it spike out and straight back instead. Ties to the shorter
+      // stretch, so an edit rewrites as little of the course as it can.
       const err = Math.abs(out + back - span) + SPAN_TIEBREAK * span;
       if (err < bestErr) {
         bestErr = err;

@@ -127,11 +127,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       destination, repeatedly until Exit editing. Exit (✕) and Undo sit over the map. Each
       reroute replaces an adjustable window (default ±600 m) of the *current* course, so edits
       chain. Both ends of the replaced stretch must lie *inside* the window, so the course either
-      side of it is untouched to the metre — an edit the window cannot absorb is refused (with a
-      message saying to widen it) rather than allowed to rewrite the course outside the band the
-      preview drew. Which pair of in-window nodes is used is then decided by length alone (ties
-      to the shorter stretch): the dragged point no longer has to be reached at the km that was
-      picked, which was the old objective and is what let the splice wander outside the window.
+      side of it keeps its exact shape and length; the stretch between them may well come out
+      longer or shorter, which only shifts the km marks after it, and that is fine by Leo. The
+      pair is chosen so the detour costs about what the stretch it replaces cost — a tighter pair
+      spikes out to the point and straight back — with ties to the shorter stretch. The dragged
+      point no longer has to be reached at the km that was picked, which was the old objective
+      and is what let the splice wander outside the window. An edit is refused only when no node
+      inside the window can reach the tapped point within the Dijkstra budget (4 × the window).
       Via points outrank edits: the window shrinks
       rather than route one away. Undo sets `resync` so the worker re-matches the restored course.
       While pulling, the grabbed point follows the finger with translucent straight legs to the

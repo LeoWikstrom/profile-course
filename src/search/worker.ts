@@ -594,7 +594,7 @@ async function editCourse(
     throw new Error(
       keep.nodes.size > 0
         ? 'Could not route through that point without dropping a via point'
-        : `Could not route through that point inside the ±${Math.round(windowM)} m window — widen it and try again`,
+        : `Nothing within ±${Math.round(windowM)} m of km ${atKm.toFixed(1)} can reach that point — pick somewhere nearer the course, or widen the edit window`,
     );
   }
   postEdited(g, newPath, target, desiredMix, weightsIn);
