@@ -14,6 +14,8 @@ const EDIT_PANE = 'editPane';
 const GRAB_RADIUS_PX = 28;
 const DRAG_THRESHOLD_PX = 12;
 const LONG_PRESS_MS = 450;
+/** How near the course the cursor must be for the readout to follow it. */
+const HOVER_RADIUS_PX = 18;
 /** How long each pass of a doubled stretch is offered before the next. */
 const CYCLE_MS = 2000;
 /** Grab points closer than this along the course are one pass, not two. */
@@ -59,6 +61,13 @@ export interface MapController {
        * each pass in turn; the pull or tap then means the one last offered.
        */
       onCycle?: (index: number, pass: number, passes: number) => void;
+      /**
+       * Wheel notches while the point is still held, positive away from the
+       * user. Whatever text it returns goes in a pill at the held point, so the
+       * caller can say what the wheel changed; the map zoom is left alone for
+       * the length of the pull.
+       */
+      onWheel?: (notches: number, index: number) => string | void;
       /** The fixed points the pulled stretch stays attached to, for the drag preview. */
       anchors?: (index: number) => readonly [LatLon, LatLon] | null;
       /** A pull may also start between the grab points, anywhere along this line. */
@@ -82,6 +91,13 @@ export interface MapController {
   /** A pill above a point on the map, for what the gesture is about to do. */
   showPointLabel(point: LatLon, text: string): void;
   hidePointLabel(): void;
+  /**
+   * A translucent point that follows the cursor along the course, with
+   * `describe`'s text in a pill above it. `at` is a fractional index into
+   * `points`, so the readout slides between them instead of hopping.
+   */
+  armHoverReadout(points: LatLon[], describe: (at: number) => string): void;
+  disarmHoverReadout(): void;
   /** Abandon a pull in progress without committing it; true if there was one. */
   cancelPull(): boolean;
 }
@@ -150,6 +166,7 @@ export function createMap(container: string): MapController {
   let grabCb: ((index: number) => void) | null = null;
   let longPressCb: ((index: number) => void) | null = null;
   let cycleCb: ((index: number, pass: number, passes: number) => void) | null = null;
+  let wheelCb: ((notches: number, index: number) => string | void) | null = null;
   let anchorsCb: ((index: number) => readonly [LatLon, LatLon] | null) | null = null;
   let lineGrab: {
     points: LatLon[];
@@ -163,6 +180,8 @@ export function createMap(container: string): MapController {
   let pullOnLine = false;
   let pullStart: { x: number; y: number } | null = null;
   let pullAnchors: readonly [LatLon, LatLon] | null = null;
+  /** Where the pulled point is now, so the wheel can redraw without a move. */
+  let pullLatLng: L.LatLng | null = null;
   let rubber: L.Polyline | null = null;
   let rubberPoint: L.Marker | null = null;
   /** The hold has already been taken as a long press; the pull is off. */
@@ -189,6 +208,34 @@ export function createMap(container: string): MapController {
   function hidePointLabel(): void {
     pointLabel?.remove();
     pointLabel = null;
+  }
+
+  function showPointLabel(point: LatLon, text: string): void {
+    if (!pointLabel) {
+      pointLabel = L.tooltip({
+        permanent: true,
+        direction: 'top',
+        offset: [0, -12],
+        className: 'point-pill',
+        interactive: false,
+      }).setLatLng([point.lat, point.lon]);
+      pointLabel.addTo(map);
+    } else {
+      pointLabel.setLatLng([point.lat, point.lon]);
+    }
+    pointLabel.setContent(text);
+  }
+
+  let hoverPoints: LatLon[] = [];
+  let hoverDescribe: ((at: number) => string) | null = null;
+  let hoverMarker: L.Marker | null = null;
+  let hoverLabel: L.Tooltip | null = null;
+
+  function hideHover(): void {
+    hoverMarker?.remove();
+    hoverMarker = null;
+    hoverLabel?.remove();
+    hoverLabel = null;
   }
 
   function clearRubber(): void {
@@ -235,7 +282,77 @@ export function createMap(container: string): MapController {
     return reps.sort((a, b) => a - b);
   }
 
+  /**
+   * Where the cursor is along the course, as a fractional index, or -1 when it
+   * is not near it. The nearest *leg* rather than the nearest point, because
+   * the points sit 25–50 m apart and a readout that hops between them does not
+   * read as following the course.
+   */
+  function alongCourse(e: PointerEvent, points: LatLon[]): number {
+    if (points.length < 2) return -1;
+    const p = map.mouseEventToContainerPoint(e);
+    let bestD = HOVER_RADIUS_PX * HOVER_RADIUS_PX;
+    let bestAt = -1;
+    let a = map.latLngToContainerPoint([points[0]!.lat, points[0]!.lon]);
+    for (let i = 1; i < points.length; i++) {
+      const b = map.latLngToContainerPoint([points[i]!.lat, points[i]!.lon]);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      const u = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+      const ex = a.x + u * dx - p.x;
+      const ey = a.y + u * dy - p.y;
+      const d = ex * ex + ey * ey;
+      if (d < bestD) {
+        bestD = d;
+        bestAt = i - 1 + u;
+      }
+      a = b;
+    }
+    return bestAt;
+  }
+
+  /** The point at a fractional index, interpolated along its leg. */
+  function pointAt(points: LatLon[], at: number): L.LatLng {
+    const i = Math.floor(at);
+    const a = points[i]!;
+    const b = points[Math.min(i + 1, points.length - 1)]!;
+    const f = at - i;
+    return L.latLng(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f);
+  }
+
   const mapEl = map.getContainer();
+
+  /** Straight legs from the two points the pulled stretch stays attached to. */
+  function drawRubber(): void {
+    if (!pullLatLng) return;
+    const from = (pullOnLine ? lineGrab!.points : pullPoints)[pullIndex]!;
+    const ends = pullAnchors ?? ([from, from] as const);
+    const line: L.LatLngExpression[] = [
+      [ends[0].lat, ends[0].lon],
+      pullLatLng,
+      [ends[1].lat, ends[1].lon],
+    ];
+    if (rubber) rubber.setLatLngs(line);
+    else {
+      rubber = L.polyline(line, {
+        pane: EDIT_PANE,
+        color: '#7c3aed',
+        weight: 4,
+        opacity: 0.55,
+        dashArray: '6 5',
+        interactive: false,
+      }).addTo(map);
+    }
+    if (rubberPoint) rubberPoint.setLatLng(pullLatLng);
+    else {
+      rubberPoint = L.marker(pullLatLng, {
+        pane: EDIT_PANE,
+        interactive: false,
+        icon: L.divIcon({ className: 'dragged-point', iconSize: [14, 14] }),
+      }).addTo(map);
+    }
+  }
 
   mapEl.addEventListener('pointerdown', (e) => {
     if (!pullCb || pullStart) return;
@@ -248,7 +365,11 @@ export function createMap(container: string): MapController {
     pullStart = { x: e.clientX, y: e.clientY };
     pullAnchors = (pullOnLine ? lineGrab!.anchors?.(i) : anchorsCb?.(i)) ?? null;
     pullHeld = false;
+    pullLatLng = null;
+    hideHover();
     map.dragging.disable();
+    // The wheel belongs to the gesture while a point is held, not to the zoom.
+    if (wheelCb) map.scrollWheelZoom.disable();
     mapEl.setPointerCapture(e.pointerId);
     if (!pullOnLine) grabCb?.(i);
     // A press where the course passes twice is ambiguous, and pixels cannot
@@ -289,32 +410,59 @@ export function createMap(container: string): MapController {
       clearCycleTimer();
     }
     if (pullHeld) return;
-    const from = (pullOnLine ? lineGrab!.points : pullPoints)[pullIndex]!;
-    const to = map.mouseEventToLatLng(e);
-    // Straight legs from the two points the stretch stays attached to, so it is
-    // obvious which part of the course the drag can still move.
-    const ends = pullAnchors ?? ([from, from] as const);
-    const line: L.LatLngExpression[] = [[ends[0].lat, ends[0].lon], to, [ends[1].lat, ends[1].lon]];
-    if (rubber) rubber.setLatLngs(line);
-    else {
-      rubber = L.polyline(line, {
-        pane: EDIT_PANE,
-        color: '#7c3aed',
-        weight: 4,
-        opacity: 0.55,
-        dashArray: '6 5',
-        interactive: false,
-      }).addTo(map);
-    }
-    if (rubberPoint) rubberPoint.setLatLng(to);
-    else {
-      rubberPoint = L.marker(to, {
-        pane: EDIT_PANE,
-        interactive: false,
-        icon: L.divIcon({ className: 'dragged-point', iconSize: [14, 14] }),
-      }).addTo(map);
-    }
+    pullLatLng = map.mouseEventToLatLng(e);
+    drawRubber();
   });
+
+  mapEl.addEventListener(
+    'wheel',
+    (e) => {
+      if (!pullStart || pullHeld || !wheelCb) return;
+      // Away from the user reads as "more", which is what the panel's arrows do.
+      const notches = -Math.sign(e.deltaY);
+      if (notches === 0) return;
+      e.preventDefault();
+      const said = wheelCb(notches, pullIndex);
+      // The stretch the edit may rewrite has just changed, and with it the two
+      // points the band hangs from.
+      pullAnchors = (pullOnLine ? lineGrab!.anchors?.(pullIndex) : anchorsCb?.(pullIndex)) ?? null;
+      drawRubber();
+      if (said && pullLatLng) showPointLabel({ lat: pullLatLng.lat, lon: pullLatLng.lng }, said);
+    },
+    { passive: false },
+  );
+
+  // Mouse only: a finger has no hover, and on touch the course is for pulling.
+  mapEl.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse' || !hoverDescribe || pullStart) return;
+    const at = alongCourse(e, hoverPoints);
+    if (at < 0) {
+      hideHover();
+      return;
+    }
+    const ll = pointAt(hoverPoints, at);
+    if (hoverMarker) hoverMarker.setLatLng(ll);
+    else {
+      hoverMarker = L.marker(ll, {
+        pane: EDIT_PANE,
+        interactive: false,
+        icon: L.divIcon({ className: 'hover-point', iconSize: [16, 16] }),
+      }).addTo(map);
+    }
+    if (hoverLabel) hoverLabel.setLatLng(ll);
+    else {
+      hoverLabel = L.tooltip({
+        permanent: true,
+        direction: 'top',
+        offset: [0, -14],
+        className: 'hover-pill',
+        interactive: false,
+      }).setLatLng(ll);
+      hoverLabel.addTo(map);
+    }
+    hoverLabel.setContent(hoverDescribe(at));
+  });
+  mapEl.addEventListener('pointerleave', hideHover);
 
   const endPull = (e: PointerEvent, commit: boolean) => {
     if (!pullStart) return;
@@ -328,11 +476,13 @@ export function createMap(container: string): MapController {
     pullIndex = -1;
     pullOnLine = false;
     pullAnchors = null;
+    pullLatLng = null;
     pullHeld = false;
     clearRubber();
     // The pass pill belongs to the gesture; the status pill carries the km on.
     hidePointLabel();
     map.dragging.enable();
+    map.scrollWheelZoom.enable();
     // The long press already acted; swallow the release and its trailing click.
     if (held) {
       lastDragEnd = Date.now();
@@ -403,6 +553,7 @@ export function createMap(container: string): MapController {
       grabCb = handlers.onGrab ?? null;
       longPressCb = handlers.onLongPress ?? null;
       cycleCb = handlers.onCycle ?? null;
+      wheelCb = handlers.onWheel ?? null;
       anchorsCb = handlers.anchors ?? null;
       lineGrab = handlers.line ?? null;
     },
@@ -411,6 +562,7 @@ export function createMap(container: string): MapController {
       grabCb = null;
       longPressCb = null;
       cycleCb = null;
+      wheelCb = null;
       anchorsCb = null;
       lineGrab = null;
       pullPoints = [];
@@ -509,6 +661,9 @@ export function createMap(container: string): MapController {
       nodeLayer = null;
       pointMarker?.remove();
       pointMarker = null;
+      hoverPoints = [];
+      hoverDescribe = null;
+      hideHover();
     },
     showCoursePoint(point) {
       if (!pointMarker) {
@@ -525,22 +680,17 @@ export function createMap(container: string): MapController {
       pointMarker?.remove();
       pointMarker = null;
     },
-    showPointLabel(point, text) {
-      if (!pointLabel) {
-        pointLabel = L.tooltip({
-          permanent: true,
-          direction: 'top',
-          offset: [0, -12],
-          className: 'point-pill',
-          interactive: false,
-        }).setLatLng([point.lat, point.lon]);
-        pointLabel.addTo(map);
-      } else {
-        pointLabel.setLatLng([point.lat, point.lon]);
-      }
-      pointLabel.setContent(text);
-    },
+    showPointLabel,
     hidePointLabel,
+    armHoverReadout(points, describe) {
+      hoverPoints = points;
+      hoverDescribe = describe;
+    },
+    disarmHoverReadout() {
+      hoverPoints = [];
+      hoverDescribe = null;
+      hideHover();
+    },
     cancelPull() {
       if (!pullStart) return false;
       clearHoldTimer();
@@ -551,8 +701,10 @@ export function createMap(container: string): MapController {
       pullIndex = -1;
       pullOnLine = false;
       pullAnchors = null;
+      pullLatLng = null;
       pullHeld = false;
       map.dragging.enable();
+      map.scrollWheelZoom.enable();
       // The release still to come must not be read as a tap on the course.
       lastDragEnd = Date.now();
       return true;

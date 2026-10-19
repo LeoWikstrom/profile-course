@@ -462,6 +462,32 @@ progress {
   animation: marker-in 0.18s ease-out;
 }
 
+/* Follows the cursor along the course, reading out where it is. Translucent,
+   because it marks where the pointer is and not anything on the course. */
+.hover-point {
+  border-radius: 50%;
+  background: rgb(17 24 39 / 0.35);
+  border: 2px solid rgb(255 255 255 / 0.9);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+}
+
+.leaflet-tooltip.hover-pill {
+  padding: 2px 7px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #f9fafb;
+  background: rgb(17 24 39 / 0.82);
+  border: none;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  white-space: nowrap;
+}
+
+.leaflet-tooltip.hover-pill::before {
+  border-top-color: rgb(17 24 39 / 0.82);
+}
+
 /* What the gesture is about to do, said over the point it will do it to —
    which pass of a doubled stretch is on offer while a press cycles them. */
 .leaflet-tooltip.point-pill {

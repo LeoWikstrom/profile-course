@@ -238,6 +238,7 @@ function showResult(
   // The profile samples sit at exactly 25 m, the export points at 25–50 m, so
   // the marker has to be found by distance rather than by the same index.
   const cum = cumulativeM(points);
+  map.armHoverReadout(points, (at) => hoverReadout(points, cum, at));
   // The combined chart replaces the target-only chart at the top of the sheet.
   renderInteractiveChart(
     targetChart,
@@ -338,6 +339,30 @@ function indexAtM(cum: number[], m: number): number {
   return i;
 }
 
+/**
+ * What the cursor is standing on, for the readout that follows the course:
+ * distance, height above sea level and gradient. The gradient is taken over
+ * ±50 m rather than between neighbouring points, which sit 25–50 m apart on a
+ * DEM with a ~30 m grid, so a single step is as much noise as slope.
+ */
+function hoverReadout(
+  points: { lat: number; lon: number; ele: number }[],
+  cum: number[],
+  at: number,
+): string {
+  const i = Math.floor(at);
+  const j = Math.min(i + 1, points.length - 1);
+  const f = at - i;
+  const m = cum[i]! + (cum[j]! - cum[i]!) * f;
+  const ele = points[i]!.ele + (points[j]!.ele - points[i]!.ele) * f;
+  const lo = indexAtM(cum, Math.max(0, m - 50));
+  const hi = indexAtM(cum, m + 50);
+  const run = cum[hi]! - cum[lo]!;
+  const grade = run > 1 ? ((points[hi]!.ele - points[lo]!.ele) / run) * 100 : 0;
+  const sign = grade > 0 ? '+' : '';
+  return `${(m / 1000).toFixed(2)} km · ${Math.round(ele)} m · ${sign}${grade.toFixed(1)} %`;
+}
+
 /** Midpoint km of the course leg whose geometry passes nearest `p`. */
 function nearestLegKm(course: CourseResult, p: { lat: number; lon: number }): number {
   const lonScale = Math.cos((p.lat * Math.PI) / 180);
@@ -365,6 +390,14 @@ function nearestLegKm(course: CourseResult, p: { lat: number; lon: number }): nu
 
 function rerouteWindowM(): number {
   return Math.max(100, Number(rerouteWindow.value) || 600);
+}
+
+/** Resizes the window in round steps, within what the number input allows. */
+function setRerouteWindowM(meters: number): number {
+  const stepped = Math.round(meters / 50) * 50;
+  const clamped = Math.min(3000, Math.max(100, stepped));
+  rerouteWindow.value = String(clamped);
+  return clamped;
 }
 
 /** The stretch an edit at `atKm` may rewrite, as course points. */
@@ -636,6 +669,20 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
       else selectDestination(index);
     },
     onGrab: (index) => previewEditWindow(points, cum, kmAt(index)),
+    // The wheel mid-pull resizes the window the edit may rewrite, so the reach
+    // can be judged against the map instead of guessed from a number in the
+    // panel. The box is shown for the length of the gesture whether or not it
+    // is switched on, since it is the thing being changed. A node edit has no
+    // window — it reaches to its two neighbours and no further.
+    ...(nodeMode
+      ? {}
+      : {
+          onWheel: (notches: number, index: number) => {
+            const next = setRerouteWindowM(rerouteWindowM() * (notches > 0 ? 1.25 : 0.8));
+            map.showEditWindow(editWindowPoints(points, cum, kmAt(index)));
+            return `± ${next} m`;
+          },
+        }),
     // Which pass is on offer belongs over the point itself, not in the pill at
     // the side: the point is what the eye is on while the passes take turns.
     onCycle: (index, pass, passes) => {

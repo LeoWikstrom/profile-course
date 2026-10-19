@@ -159,6 +159,14 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).
+      The **wheel while the point is still held** resizes that window, ×1.25 a notch away from
+      the user and ×0.8 towards, rounded to 50 m and clamped to the panel's 100–3000 m. The box
+      is shown for the length of the gesture whether or not the checkbox is on, the rubber
+      band's two ends move with it, and the new size is said in the pill over the point — so the
+      reach is judged against the map rather than guessed from a number in the panel. The map's
+      own wheel zoom is switched off for the length of a pull, since the gesture owns the wheel.
+      Node edits have no window (they reach to the two neighbouring junctions and no further),
+      so the submode leaves the wheel to the map.
       **Picking which pass.** A tap resolves to a course point by pixels alone, so the two passes
       of a stretch the course covers twice used to collapse to whichever was a hair nearer, and
       one of them was simply unreachable. Two ways in now, both keeping the plain tap and pull
@@ -222,5 +230,14 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       path, so an edit lands on the course on screen. An edit, undo or improve rewrites the shown
       tab in place. The whole strip survives a reload (every course is persisted, with which one
       was shown); only the shown course goes into the URL hash.
+- [x] **Hover readout** (onthegomap-style): with the mouse within 18 px of the course, a
+      translucent point follows it along the line with a pill above reading distance, height
+      above sea level and gradient. It tracks the nearest *leg* and interpolates along it, not
+      the nearest point — export points are 25–50 m apart and a readout that hops between them
+      does not read as following the course. The gradient is taken over ±50 m for the same
+      reason the course is: one step of a ~30 m DEM grid is as much noise as slope. Mouse only
+      (a finger has no hover, and on touch the course is for pulling), suppressed while a point
+      is being pulled, and on its own marker and tooltip so it never clobbers the editing ones.
+
 - [ ] **Phase 6 – Later** (Leo wants these, but last): Strava/Garmin course import, Strava
       personal heatmap, OSM GPS traces.
