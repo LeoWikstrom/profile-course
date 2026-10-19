@@ -55,7 +55,16 @@ export function saveSession(state: SessionState): void {
 }
 
 export async function loadSession(): Promise<SessionState | null> {
-  return (await cacheGet<SessionState>(KEY)) ?? null;
+  const state = await cacheGet<SessionState>(KEY);
+  if (!state) return null;
+  // Courses saved before they carried their own path cannot be edited: the id
+  // they carry instead belonged to a worker that no longer exists, so every
+  // edit falls back to a map-match, which rewrites or refuses the course. The
+  // GPX and the settings are still good, so only the tabs go.
+  if (state.results?.some((r) => !r.course.path)) {
+    return { ...state, results: undefined, shown: undefined };
+  }
+  return state;
 }
 
 /** Ask the browser not to evict our origin's storage under disk pressure. */

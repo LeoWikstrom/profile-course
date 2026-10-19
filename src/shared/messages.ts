@@ -27,14 +27,31 @@ export interface CourseSegment {
   surface: number;
 }
 
+/**
+ * The exact path a course was built from — edge indices into one graph, plus
+ * the recipe for rebuilding that graph. An edit carries this instead of sending
+ * the geometry back to be map-matched, because matching is lossy and rewrites
+ * the course far outside any edit window. Structured-cloneable and persisted
+ * with the course, so an edit still lands exactly after a reload.
+ */
+export interface CoursePathRef {
+  edges: number[];
+  /** 1 = traversed a→b, 0 = b→a. */
+  dirs: number[];
+  /** The four ensurePrepared arguments, plus the size of what they built. */
+  graph: {
+    start: LatLon;
+    radiusMeters: number;
+    targetLengthMeters: number;
+    connectors: boolean;
+    /** Fingerprint: a rebuild of a different size is not this graph. */
+    edgeCount: number;
+    nodeCount: number;
+  };
+}
+
 export interface CourseResult {
-  /**
-   * Identifies the exact path the worker built this course from, so an edit can
-   * name it instead of sending the geometry back to be map-matched — matching is
-   * lossy and rewrites the course far outside any edit window. Persisted with
-   * the course; a worker that has never seen the id falls back to matching.
-   */
-  pathId: number;
+  path: CoursePathRef;
   segments: CourseSegment[];
   /** Elevation every ~25 m relative to course start. */
   samples: Float32Array;
@@ -102,8 +119,8 @@ export type MainToWorker =
       type: 'editCourse';
       atKm: number;
       to: LatLon;
-      /** The path to edit, and its points for when the worker has lost it. */
-      pathId: number;
+      /** The path to edit, and its points for when it cannot be rebuilt. */
+      path: CoursePathRef;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;
@@ -127,7 +144,7 @@ export type MainToWorker =
       atKms?: number[];
       /** Where the node should sit; null for a delete. */
       to: LatLon | null;
-      pathId: number;
+      path: CoursePathRef;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;
@@ -138,7 +155,7 @@ export type MainToWorker =
   | {
       /** Run the improvement pass on the current course. */
       type: 'improveCourse';
-      pathId: number;
+      path: CoursePathRef;
       lats: Float64Array;
       lons: Float64Array;
       target: TargetTransfer;

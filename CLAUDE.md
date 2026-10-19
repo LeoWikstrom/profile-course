@@ -147,15 +147,21 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       count, since one edge can be longer than the radius). The drawn window and the rubber band
       follow the same rule, so the band never promises more than it keeps.
       Via points outrank edits: the window shrinks
-      rather than route one away. The worker keeps the exact path behind **every** course it has
-      sent out, under an id the course carries back with it (the cache empties when the graph
-      changes, since a path is indices into one graph). Map-matching a course we generated
-      ourselves back to the graph is lossy — it rewrites the course wherever the match prefers
-      another way through, anywhere at all, which is what used to change the course far outside
-      the edit window after a tab switch or an undo. Matching is now the fallback only: geometry
-      we never produced (an uploaded course) or an id this worker has never seen (a session
-      restored after a reload). A miss matches against the graph already in hand rather than
-      fetching one, so an edit never waits on the network while Overpass is down.
+      rather than route one away. **Every course carries its own path** — the edge indices it
+      was built from, plus the recipe for the graph they index into (the four `ensurePrepared`
+      arguments and the edge/node counts as a fingerprint). An edit sends that back, and the
+      worker rebuilds the graph if it is not the one in hand; a graph is deterministic given the
+      network response, which is cached in IndexedDB, so the rebuild costs no network.
+      Map-matching a course we generated ourselves back to the graph is lossy — it rewrites the
+      course wherever the match prefers another way through, anywhere at all, which is what used
+      to change the course far outside the edit window after a tab switch or an undo. It was
+      first fixed with a worker-side cache under an id the course carried, but an id dies with
+      the worker, so after a reload every restored course fell back to matching and the match
+      threw ("could not follow the course near km 20.2") — the whole tab strip became
+      uneditable. Matching is now the fallback only: geometry we never produced (an uploaded
+      course), or a rebuild that is unavailable (offline, Overpass down — then whatever graph is
+      in hand is matched against rather than refusing) or that comes out a different size,
+      meaning OSM has changed under the course.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).
@@ -237,10 +243,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       strip says what is ready without being read. The strip itself is `pointer-events: none`
       so the map stays usable between tabs, and it publishes its height as `--tab-strip-h`,
       which pushes the edit/via bars and the status pill down. 1–9 selects, and the arrows walk the strip
-      once a tab has focus. Switching leaves editing mode; the worker still holds every tab's own
-      path, so an edit lands on the course on screen. An edit, undo or improve rewrites the shown
+      once a tab has focus. Switching leaves editing mode; every tab carries its own path, so an
+      edit lands on the course on screen. An edit, undo or improve rewrites the shown
       tab in place. The whole strip survives a reload (every course is persisted, with which one
-      was shown); only the shown course goes into the URL hash.
+      was shown); only the shown course goes into the URL hash. A restored strip whose courses
+      predate them carrying their own path is dropped on load — such a course can only be
+      map-matched to be edited, and a tab that cannot be edited is not worth keeping. The GPX and
+      the settings stay, so it is one Search away.
 - [x] **Hover readout** (onthegomap-style): with the mouse within 18 px of the course, a
       translucent point follows it along the line with a pill above reading distance, height
       above sea level and gradient. It tracks the nearest *leg* and interpolates along it, not

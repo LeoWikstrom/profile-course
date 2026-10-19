@@ -13,6 +13,7 @@ import { TerrainSampler } from '../net/terrain';
 import { haversineMeters } from '../shared/geo';
 import type { TargetProfile } from '../gpx/profile';
 import type {
+  CoursePathRef,
   CourseResult,
   CourseSegment,
   LatLon,
@@ -94,35 +95,24 @@ let validEnd: Uint8Array | null = null;
 let preparedKey = '';
 let cancelled = false;
 
-/**
- * The exact path behind every course this worker has sent out, under the id the
- * course carries. An edit names the path that way, instead of sending the
- * geometry back to be map-matched: matching is lossy, and rewrites the course
- * wherever it prefers another way through — far outside any edit window.
- * Paths belong to the graph they index into, so a new graph empties the cache.
- */
-const pathCache = new Map<number, CoursePath>();
-let pathCacheKey = '';
-let nextPathId = 1;
-
-/** Enough for four tabs and a long chain of edits on each. */
-const PATH_CACHE_MAX = 64;
-
-function rememberPath(path: CoursePath): number {
-  if (pathCacheKey !== preparedKey) {
-    pathCache.clear();
-    pathCacheKey = preparedKey;
-  }
-  const id = nextPathId++;
-  pathCache.set(id, path);
-  while (pathCache.size > PATH_CACHE_MAX) {
-    pathCache.delete(pathCache.keys().next().value!);
-  }
-  return id;
-}
+/** What the graph in hand was built from, so a course can name its own. */
+let preparedArgs: CoursePathRef['graph'] | null = null;
 
 /** The course may leave the radius; cap how wide a network we are willing to pull. */
 const MAX_GRAPH_RADIUS_M = 15_000;
+
+/** Two prepares with the same key build the same graph, from the same cache. */
+function prepareKey(
+  start: LatLon,
+  radiusMeters: number,
+  targetLengthMeters: number,
+  connectors: boolean,
+): string {
+  // The radius is only the start/finish zone. A course of length L can reach
+  // about L/2 out before it has to head back.
+  const graphRadius = Math.min(radiusMeters + targetLengthMeters / 2, MAX_GRAPH_RADIUS_M);
+  return `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)},${Math.round(graphRadius)},${connectors ? 'c' : ''}`;
+}
 
 async function ensurePrepared(
   start: LatLon,
@@ -130,10 +120,8 @@ async function ensurePrepared(
   targetLengthMeters: number,
   connectors = false,
 ): Promise<void> {
-  // The radius is only the start/finish zone. A course of length L can reach
-  // about L/2 out before it has to head back.
   const graphRadius = Math.min(radiusMeters + targetLengthMeters / 2, MAX_GRAPH_RADIUS_M);
-  const key = `${start.lat.toFixed(5)},${start.lon.toFixed(5)},${Math.round(radiusMeters)},${Math.round(graphRadius)},${connectors ? 'c' : ''}`;
+  const key = prepareKey(start, radiusMeters, targetLengthMeters, connectors);
   if (graph && preparedKey === key) return;
 
   post({ type: 'progress', stage: 'fetching network', fraction: 0.05, bestScore: null });
@@ -177,6 +165,14 @@ async function ensurePrepared(
   post({ type: 'progress', stage: 'sampling elevation', fraction: 0.25, bestScore: null });
   await sampleEdgeElevations(graph, sampler);
   preparedKey = key;
+  preparedArgs = {
+    start,
+    radiusMeters,
+    targetLengthMeters,
+    connectors,
+    edgeCount: graph.edges.length,
+    nodeCount: graph.nodeLat.length,
+  };
 
   const lat = graph.nodeLat[startNode]!;
   const lon = graph.nodeLon[startNode]!;
@@ -220,7 +216,11 @@ function toResult(
     }
   }
   return {
-    pathId: rememberPath(candidate.path),
+    path: {
+      edges: Array.from(candidate.path.edges),
+      dirs: Array.from(candidate.path.dirs),
+      graph: preparedArgs!,
+    },
     segments: pathSegments(g, candidate.path),
     samples: candidate.course.samples,
     exportPoints,
@@ -558,21 +558,47 @@ async function matchCourse(
   });
 }
 
+/** True when the graph in hand is the one `ref` indexes into. */
+function refGraphInHand(ref: CoursePathRef): boolean {
+  const r = ref.graph;
+  return (
+    graph !== null &&
+    preparedKey === prepareKey(r.start, r.radiusMeters, r.targetLengthMeters, r.connectors) &&
+    graph.edges.length === r.edgeCount &&
+    graph.nodeLat.length === r.nodeCount
+  );
+}
+
 /**
- * Returns the path the course with this id was built from: the exact one if this
- * worker still holds it (any tab, any step of its edit history), otherwise a
- * map-match of the points, which is all an uploaded course or a session
- * restored after a reload has. The graph in hand is matched against when there
- * is one, because the course came from it; only a worker with no graph at all
- * goes to the network, and an edit must never wait on that if it can help it.
+ * Returns the path the course was built from: its own edge indices whenever the
+ * graph they index into is in hand or can be rebuilt, otherwise a map-match of
+ * the points. The course carries the recipe for its graph, and a graph is
+ * deterministic given the network response (cached in IndexedDB), so a course
+ * stays exactly editable across tab switches, undo and a reload — matching is
+ * lossy and rewrites the course wherever it prefers another way through, far
+ * outside any edit window. Matching is the fallback: geometry we never produced
+ * (an uploaded course), or a rebuild that is unavailable or comes out a
+ * different size (the network has since changed under us).
  */
 async function ensureCurrentPath(
-  pathId: number,
+  ref: CoursePathRef | undefined,
   lats: Float64Array,
   lons: Float64Array,
 ): Promise<{ path: CoursePath; exact: boolean }> {
-  const known = graph ? pathCache.get(pathId) : undefined;
-  if (known) return { path: known, exact: true };
+  if (ref && ref.edges.length > 0) {
+    if (!refGraphInHand(ref)) {
+      const r = ref.graph;
+      try {
+        await ensurePrepared(r.start, r.radiusMeters, r.targetLengthMeters, r.connectors);
+      } catch {
+        // Offline, or Overpass is down. Matching against whatever graph we have
+        // beats refusing the edit outright; with no graph at all, fall through.
+      }
+    }
+    if (refGraphInHand(ref)) {
+      return { path: { edges: ref.edges, dirs: ref.dirs }, exact: true };
+    }
+  }
   if (graph) return { path: matchTrackToGraph(graph, lats, lons).path, exact: false };
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
@@ -589,7 +615,7 @@ async function ensureCurrentPath(
 }
 
 /**
- * Said after a refused edit. A course whose path the worker no longer holds was
+ * Said after a refused edit. A course whose graph could not be rebuilt had to be
  * matched back to the network to be edited at all, and a match that went badly
  * is a likelier reason for the refusal than the window being too tight.
  */
@@ -600,7 +626,7 @@ function matchedNote(exact: boolean): string {
 async function editCourse(
   atKm: number,
   to: LatLon,
-  pathId: number,
+  ref: CoursePathRef,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
@@ -609,7 +635,7 @@ async function editCourse(
   viaPoints: ViaPoint[],
   windowM: number,
 ): Promise<void> {
-  const { path: currentPath, exact } = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath, exact } = await ensureCurrentPath(ref, lats, lons);
   const g = graph!;
   const targetNode = snapToNode(g, to.lat, to.lon, EDIT_SNAP_M);
   if (targetNode < 0) {
@@ -637,7 +663,7 @@ async function nodeEdit(
   atKm: number,
   atKms: number[] | undefined,
   to: LatLon | null,
-  pathId: number,
+  ref: CoursePathRef,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
@@ -645,7 +671,7 @@ async function nodeEdit(
   weightsIn: Record<string, number> | null,
   viaPoints: ViaPoint[],
 ): Promise<void> {
-  const { path: currentPath, exact } = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath, exact } = await ensureCurrentPath(ref, lats, lons);
   const g = graph!;
   const keep = viaKeepSets(g, viaPoints);
   const atM = atKm * 1000;
@@ -711,14 +737,14 @@ function postEdited(
 }
 
 async function improveMatched(
-  pathId: number,
+  ref: CoursePathRef,
   lats: Float64Array,
   lons: Float64Array,
   target: TargetTransfer,
   desiredMix: [number, number, number, number] | null,
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
-  const { path: currentPath } = await ensureCurrentPath(pathId, lats, lons);
+  const { path: currentPath } = await ensureCurrentPath(ref, lats, lons);
   cancelled = false;
   const g = graph!;
   const weights = { ...DEFAULT_WEIGHTS, ...(weightsIn ?? {}) };
@@ -798,7 +824,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       editCourse(
         msg.atKm,
         msg.to,
-        msg.pathId,
+        msg.path,
         msg.lats,
         msg.lons,
         msg.target,
@@ -816,7 +842,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.atKm,
         msg.atKms,
         msg.to,
-        msg.pathId,
+        msg.path,
         msg.lats,
         msg.lons,
         msg.target,
@@ -828,7 +854,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       );
       break;
     case 'improveCourse':
-      improveMatched(msg.pathId, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
+      improveMatched(msg.path, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
         (err: unknown) =>
           post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
