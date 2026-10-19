@@ -139,6 +139,21 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       While pulling, the grabbed point follows the finger with translucent straight legs to the
       two points the edit leaves in place (onthegomap-style); the course snaps to the routed
       result on release. A translucent box can also outline the window (off by default).
+      **Picking which pass.** A tap resolves to a course point by pixels alone, so the two passes
+      of a stretch the course covers twice used to collapse to whichever was a hair nearer, and
+      one of them was simply unreachable. Two ways in now, both keeping the plain tap and pull
+      untouched: *holding* a point where the course passes more than once offers each pass in
+      turn every 2 s, with the km and "pass n of m" in the status pill and a short vibration on
+      each switch, and the drag or release then means the pass last offered — crossing the drag
+      threshold stops the cycling, so a pull is never stolen by a switch mid-gesture. Passes are
+      told apart by index gap among the grab points (≥ 8 apart is a second pass, closer is one
+      pass, a hairpin included), because the map layer knows pixels, not distances. Second way:
+      scrubbing the profile chart and *letting go* picks that distance as the edit's origin, the
+      same commit-on-release as a via marker, and the map is then armed for the destination tap.
+      The chart's samples sit at exactly 25 m while the export points sit at 25–50 m, so the
+      marker is found by cumulative distance, never by the same index. Holding a *multi-pass* dot
+      in node submode therefore cycles instead of marking, which means such a dot cannot join a
+      batch delete — known gap, deliberate.
       **Node submode**
       ("Nodes" in the edit bar) treats course nodes as waypoints, ignoring the score entirely:
       every junction is drawn as a dot, a pull moves that node, a tap on a dot deletes it, a pull

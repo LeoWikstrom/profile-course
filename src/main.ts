@@ -215,6 +215,9 @@ function persistSession(): void {
   });
 }
 
+/** Takes a distance picked on the chart while editing; null when not editing. */
+let chartPick: ((km: number) => void) | null = null;
+
 function showResult(
   result: { course: CourseResult; profile: TargetProfile },
   action?: { label: string; onAction: () => void },
@@ -223,15 +226,26 @@ function showResult(
   map.drawCourse(result.course.segments);
   map.decorateCourse(result.course.exportPoints);
   const points = result.course.exportPoints;
+  // The profile samples sit at exactly 25 m, the export points at 25–50 m, so
+  // the marker has to be found by distance rather than by the same index.
+  const cum = cumulativeM(points);
   // The combined chart replaces the target-only chart at the top of the sheet.
-  renderInteractiveChart(targetChart, result.profile.samples, result.course.samples, (i) => {
-    if (i === null) {
-      map.hideCoursePoint();
-      return;
-    }
-    lastChartKm = (i * SAMPLE_STEP_M) / 1000;
-    map.showCoursePoint(points[Math.min(i, points.length - 1)]!);
-  });
+  renderInteractiveChart(
+    targetChart,
+    result.profile.samples,
+    result.course.samples,
+    (i) => {
+      if (i === null) {
+        map.hideCoursePoint();
+        return;
+      }
+      lastChartKm = (i * SAMPLE_STEP_M) / 1000;
+      map.showCoursePoint(points[indexAtM(cum, lastChartKm * 1000)]!);
+    },
+    // While editing, letting go of the chart picks that distance to edit at —
+    // the only way to say which pass of a stretch the course covers twice.
+    (i) => chartPick?.((i * SAMPLE_STEP_M) / 1000),
+  );
   renderResult(
     resultEls,
     result.course,
@@ -306,6 +320,13 @@ function cumulativeM(points: { lat: number; lon: number }[]): number[] {
     cum.push(cum[i - 1]! + haversineMeters(a.lat, a.lon, b.lat, b.lon));
   }
   return cum;
+}
+
+/** The export point nearest a distance along the course. */
+function indexAtM(cum: number[], m: number): number {
+  let i = 0;
+  while (i + 1 < cum.length && cum[i + 1]! <= m) i++;
+  return i;
 }
 
 /** Midpoint km of the course leg whose geometry passes nearest `p`. */
@@ -400,6 +421,7 @@ function toggleEditing(result: { course: CourseResult; profile: TargetProfile })
 function exitEditing(): void {
   editingMode = false;
   nodeMode = false;
+  chartPick = null;
   map.disarmViaPlacement();
   map.disarmCourseDrag();
   map.hideCoursePoint();
@@ -541,7 +563,7 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   setEditStatus(
     nodeMode
       ? 'Nodes: pull a dot to move it, tap one to delete it, hold to mark several.'
-      : 'Editing: pull the course where you want it, or tap a point on it.',
+      : 'Editing: pull the course where you want it, or pick a point on it — on the map or on the chart.',
   );
   /** The leg of the course a distance falls on, as an index into `nodes`. */
   const legAt = (km: number): number => {
@@ -555,16 +577,26 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
   map.setNodeMarkers(nodes ?? [], markedNodes);
   map.hideEditWindow();
 
-  const selectDestination = (index: number) => {
-    const atKm = kmAt(index);
-    map.showCoursePoint(grabPoints[index]!);
+  /** First half of the two-tap flow: the km to edit at is settled, the destination is not. */
+  const selectOrigin = (atKm: number, marker: { lat: number; lon: number }) => {
+    map.showCoursePoint(marker);
     previewEditWindow(points, cum, atKm);
     // While waiting for the destination, a tap near the course must not be
     // swallowed as a new pull.
     map.disarmCourseDrag();
-    setEditStatus(`Editing near km ${atKm.toFixed(1)} — tap where the course should go…`);
-    map.armViaPlacement((to) => sendEdit(result, atKm, to));
+    setEditStatus(
+      nodeMode
+        ? `Moving the point near km ${atKm.toFixed(2)} — tap where it should go…`
+        : `Editing near km ${atKm.toFixed(2)} — tap where the course should go…`,
+    );
+    map.armViaPlacement((to) => {
+      if (nodeMode) sendNodeEdit(result, 'move', atKm, to);
+      else sendEdit(result, atKm, to);
+    });
   };
+  const selectDestination = (index: number) => selectOrigin(kmAt(index), grabPoints[index]!);
+  // The chart is the other way in: scrub to a distance, let go, then tap the map.
+  chartPick = (km) => selectOrigin(km, points[indexAtM(cum, km * 1000)]!);
 
   map.armCourseDrag(grabPoints, {
     onPull: (index, to, dragged) => {
@@ -585,6 +617,16 @@ function armEditing(result: { course: CourseResult; profile: TargetProfile }): v
       else selectDestination(index);
     },
     onGrab: (index) => previewEditWindow(points, cum, kmAt(index)),
+    onCycle: (index, pass, passes) => {
+      const atKm = kmAt(index);
+      previewEditWindow(points, cum, atKm);
+      map.showCoursePoint(grabPoints[index]!);
+      setEditStatus(
+        nodeMode
+          ? `km ${atKm.toFixed(2)} — pass ${pass + 1} of ${passes}. Keep holding to switch, then pull to move it or let go to delete it.`
+          : `km ${atKm.toFixed(2)} — pass ${pass + 1} of ${passes}. Keep holding to switch, then pull it or let go to pick it.`,
+      );
+    },
     ...(nodes
       ? {
           onLongPress: (index: number) => {

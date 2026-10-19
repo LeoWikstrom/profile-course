@@ -6,13 +6,15 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  * Overlaid target/course chart where touching or dragging shows a crosshair
  * with distance, elevation and grade, and reports the sample index so the
  * matching point can be highlighted on the map. `course` may be null, which
- * leaves the race profile alone but still scrubbable.
+ * leaves the race profile alone but still scrubbable. `onCommit` makes the
+ * chart a picker: scrub to a distance, let go, and that sample is chosen.
  */
 export function renderInteractiveChart(
   container: HTMLElement,
   target: Float32Array,
   course: Float32Array | null,
   onPoint: (sampleIndex: number | null) => void,
+  onCommit?: ((sampleIndex: number) => void) | null,
   width = 360,
   height = 140,
 ): void {
@@ -102,6 +104,9 @@ export function renderInteractiveChart(
 
   const shown = course ? [crosshair, dot, text, targetDot, targetText] : [crosshair, targetDot, targetText];
 
+  /** The sample under the finger, for `onCommit` to take on release. */
+  let at: number | null = null;
+
   function show(clientX: number): void {
     const rect = svg.getBoundingClientRect();
     const fx = ((clientX - rect.left) / rect.width) * width;
@@ -136,12 +141,15 @@ export function renderInteractiveChart(
     targetText.setAttribute('x', tx);
 
     for (const el of shown) el.setAttribute('visibility', 'visible');
+    at = i;
     onPoint(i);
   }
 
-  function hide(): void {
+  /** `keepPoint` leaves the map's marker up, because a commit just claimed it. */
+  function hide(keepPoint = false): void {
     for (const el of shown) el.setAttribute('visibility', 'hidden');
-    onPoint(null);
+    at = null;
+    if (!keepPoint) onPoint(null);
   }
 
   svg.addEventListener('pointerdown', (e) => {
@@ -151,8 +159,18 @@ export function renderInteractiveChart(
   svg.addEventListener('pointermove', (e) => {
     if (e.buttons > 0 || e.pointerType === 'mouse') show(e.clientX);
   });
-  svg.addEventListener('pointerup', hide);
-  svg.addEventListener('pointercancel', hide);
+  svg.addEventListener('pointerup', () => {
+    // Letting go commits, as with a via marker, so you can scrub along until
+    // the crosshair reads the distance you meant and only then release.
+    if (onCommit && at !== null) {
+      const i = at;
+      hide(true);
+      onCommit(i);
+      return;
+    }
+    hide();
+  });
+  svg.addEventListener('pointercancel', () => hide());
   svg.addEventListener('pointerleave', (e) => {
     if (e.pointerType === 'mouse') hide();
   });

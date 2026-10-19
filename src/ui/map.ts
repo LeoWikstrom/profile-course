@@ -14,6 +14,10 @@ const EDIT_PANE = 'editPane';
 const GRAB_RADIUS_PX = 28;
 const DRAG_THRESHOLD_PX = 12;
 const LONG_PRESS_MS = 450;
+/** How long each pass of a doubled stretch is offered before the next. */
+const CYCLE_MS = 2000;
+/** Grab points closer than this along the course are one pass, not two. */
+const PASS_GAP = 8;
 
 // Leaflet's _getIconUrl builds paths from imagePath, bypassing the bundler's
 // hashed asset URLs; removing it makes mergeOptions URLs win.
@@ -50,6 +54,11 @@ export interface MapController {
       onGrab?: (index: number) => void;
       /** Held still on a point long enough to mean "mark", not "pull". */
       onLongPress?: (index: number) => void;
+      /**
+       * Where the course passes the same spot more than once, holding offers
+       * each pass in turn; the pull or tap then means the one last offered.
+       */
+      onCycle?: (index: number, pass: number, passes: number) => void;
       /** The fixed points the pulled stretch stays attached to, for the drag preview. */
       anchors?: (index: number) => readonly [LatLon, LatLon] | null;
       /** A pull may also start between the grab points, anywhere along this line. */
@@ -134,6 +143,7 @@ export function createMap(container: string): MapController {
   let pullCb: ((index: number, to: LatLon, dragged: boolean) => void) | null = null;
   let grabCb: ((index: number) => void) | null = null;
   let longPressCb: ((index: number) => void) | null = null;
+  let cycleCb: ((index: number, pass: number, passes: number) => void) | null = null;
   let anchorsCb: ((index: number) => readonly [LatLon, LatLon] | null) | null = null;
   let lineGrab: {
     points: LatLon[];
@@ -152,11 +162,22 @@ export function createMap(container: string): MapController {
   /** The hold has already been taken as a long press; the pull is off. */
   let pullHeld = false;
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  /** One index per pass under the press, and which of them is being offered. */
+  let cyclePasses: number[] = [];
+  let cyclePass = 0;
+  let cycleTimer: ReturnType<typeof setInterval> | null = null;
 
   function clearHoldTimer(): void {
     if (holdTimer === null) return;
     clearTimeout(holdTimer);
     holdTimer = null;
+  }
+
+  function clearCycleTimer(): void {
+    cyclePasses = [];
+    if (cycleTimer === null) return;
+    clearInterval(cycleTimer);
+    cycleTimer = null;
   }
 
   function clearRubber(): void {
@@ -181,6 +202,28 @@ export function createMap(container: string): MapController {
     return best;
   }
 
+  /**
+   * One grab point per distinct pass of the course under the press, nearest
+   * first within each pass, in course order. Neighbouring points are the same
+   * pass — a hairpin included; a second pass is a cluster that is close on
+   * screen but far away along the course.
+   */
+  function passesAt(e: PointerEvent, points: LatLon[]): number[] {
+    const p = map.mouseEventToContainerPoint(e);
+    const near: { i: number; d: number }[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const q = map.latLngToContainerPoint([points[i]!.lat, points[i]!.lon]);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d < GRAB_RADIUS_PX) near.push({ i, d });
+    }
+    near.sort((a, b) => a.d - b.d);
+    const reps: number[] = [];
+    for (const { i } of near) {
+      if (!reps.some((r) => Math.abs(r - i) < PASS_GAP)) reps.push(i);
+    }
+    return reps.sort((a, b) => a - b);
+  }
+
   const mapEl = map.getContainer();
 
   mapEl.addEventListener('pointerdown', (e) => {
@@ -197,9 +240,25 @@ export function createMap(container: string): MapController {
     map.dragging.disable();
     mapEl.setPointerCapture(e.pointerId);
     if (!pullOnLine) grabCb?.(i);
+    // A press where the course passes twice is ambiguous, and pixels cannot
+    // settle it: hold still and the passes take turns until one is pulled or
+    // released. Holding to mark is out while that is going on.
+    const passes = cycleCb && !pullOnLine ? passesAt(e, pullPoints) : [];
+    if (passes.length > 1) {
+      cyclePasses = passes;
+      cyclePass = Math.max(0, passes.indexOf(i));
+      cycleCb?.(i, cyclePass, passes.length);
+      cycleTimer = setInterval(() => {
+        cyclePass = (cyclePass + 1) % cyclePasses.length;
+        pullIndex = cyclePasses[cyclePass]!;
+        pullAnchors = anchorsCb?.(pullIndex) ?? null;
+        navigator.vibrate?.(30);
+        cycleCb?.(pullIndex, cyclePass, cyclePasses.length);
+      }, CYCLE_MS);
+    }
     // Holding a point still is a different gesture from pulling it: the pull
     // is abandoned and the caller gets to mark the point instead.
-    if (longPressCb && !pullOnLine) {
+    if (longPressCb && !pullOnLine && passes.length <= 1) {
       const held = i;
       holdTimer = setTimeout(() => {
         holdTimer = null;
@@ -212,9 +271,11 @@ export function createMap(container: string): MapController {
 
   mapEl.addEventListener('pointermove', (e) => {
     if (!pullStart) return;
-    // Moving off the point means a pull, not a hold.
+    // Moving off the point means a pull, not a hold: the pass being offered
+    // when the drag began is the one that gets pulled.
     if (Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y) >= DRAG_THRESHOLD_PX) {
       clearHoldTimer();
+      clearCycleTimer();
     }
     if (pullHeld) return;
     const from = (pullOnLine ? lineGrab!.points : pullPoints)[pullIndex]!;
@@ -247,6 +308,7 @@ export function createMap(container: string): MapController {
   const endPull = (e: PointerEvent, commit: boolean) => {
     if (!pullStart) return;
     clearHoldTimer();
+    clearCycleTimer();
     const moved = Math.hypot(e.clientX - pullStart.x, e.clientY - pullStart.y);
     const index = pullIndex;
     const onLine = pullOnLine;
@@ -327,6 +389,7 @@ export function createMap(container: string): MapController {
       pullCb = handlers.onPull;
       grabCb = handlers.onGrab ?? null;
       longPressCb = handlers.onLongPress ?? null;
+      cycleCb = handlers.onCycle ?? null;
       anchorsCb = handlers.anchors ?? null;
       lineGrab = handlers.line ?? null;
     },
@@ -334,10 +397,12 @@ export function createMap(container: string): MapController {
       pullCb = null;
       grabCb = null;
       longPressCb = null;
+      cycleCb = null;
       anchorsCb = null;
       lineGrab = null;
       pullPoints = [];
       clearHoldTimer();
+      clearCycleTimer();
     },
     showEditWindow(points) {
       if (points.length === 0) return;
