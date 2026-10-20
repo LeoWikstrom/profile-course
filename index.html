@@ -155,6 +155,9 @@
             <span>Prefer paths people actually run (uses the downloaded GPS traces; ground no
               trace covers, including anywhere outside a download, counts as unrun)</span>
           </label>
+          <label class="control"><span>Unrun ground (only applies with the option above on; past
+            ~10 courses start lapping the few paths the traces cover)</span>
+            <input type="number" id="w-untracked" value="5" min="0" step="1" /></label>
           <label class="control checkbox">
             <input type="checkbox" id="start-anywhere" />
             <span>Start anywhere in the zone (takes more compute time; does not guarantee a

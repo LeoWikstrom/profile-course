@@ -294,6 +294,14 @@ distinguishes running from driving.
       the beam ranks on it as well, since the final score only reorders what the beam survived.
       **Ground no download covers reads as unrun on purpose**: if it were free instead, the
       search would be pulled straight out of the area that was downloaded.
+      **The weight is 5, benchmarked** (`bench/traceWeight.ts`, sweep 0/5/10/20/40 over 3 seeds
+      on a real 2 km Gothenburg graph, every course rescored at `untracked: 0` so the totals are
+      comparable). Traces covered 4 421 of 22 197 edges, and preferring that fifth makes courses
+      lap it: out-and-back 42.8 → 44.7 → 48.1 → 50.8 → 56.1 and repeats 2.2 → 6.8 at 20, while
+      the unrun fraction sat at 80/78/80/74 % — the term buys almost no coverage until 40, which
+      reaches 33 % unrun only by wrecking local shape (20.0 → 27.0) and the profile itself. So 5
+      is a tie-breaker between otherwise similar ways, exposed as the "Unrun ground" weight in
+      Advanced settings; don't raise it without trace coverage far denser than a fifth.
 
 Panel sections (Offline areas, Advanced settings) are `details.section`: a
 full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as
