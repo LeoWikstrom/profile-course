@@ -14,8 +14,10 @@ import {
   type ResultElements,
 } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
+import { renderShortcuts } from './ui/shortcuts';
 import SearchWorker from './search/worker?worker';
 
+const mapEl = document.getElementById('map') as HTMLElement;
 const map = createMap('map');
 const worker = new SearchWorker();
 const sheetEl = document.getElementById('sheet') as HTMLElement;
@@ -144,15 +146,69 @@ function showCandidate(index: number): void {
   persistSession();
 }
 
+const shortcutsOverlay = document.getElementById('shortcuts-overlay') as HTMLDivElement;
+const shortcutsClose = document.getElementById('shortcuts-close') as HTMLButtonElement;
+renderShortcuts(document.getElementById('shortcuts-overlay-list') as HTMLElement);
+renderShortcuts(document.getElementById('shortcuts-help') as HTMLElement);
+
+function showShortcuts(): void {
+  shortcutsOverlay.hidden = false;
+  slideIn(shortcutsOverlay);
+  shortcutsClose.focus();
+}
+
+function hideShortcuts(): void {
+  if (shortcutsOverlay.hidden) return;
+  shortcutsOverlay.hidden = true;
+  // Focus was moved onto the Close button, which is now gone from the page.
+  shortcutsClose.blur();
+}
+
+shortcutsClose.addEventListener('click', hideShortcuts);
+// Anywhere off the card: the overlay covers the window, so a tap on it is a
+// tap on the map or the panel the user meant to get back to.
+shortcutsOverlay.addEventListener('click', (e) => {
+  if (e.target === shortcutsOverlay) hideShortcuts();
+});
+
+/**
+ * Enter means Find course, but only where nothing else already answers it: a
+ * button, a summary, a link or a file input all do something of their own with
+ * it, and stealing that would break the panel's own keyboard use.
+ */
+function enterIsFree(focus: Element | null): boolean {
+  if (focus === null || focus === document.body) return true;
+  if (focus instanceof HTMLInputElement) return focus.type === 'number' || focus.type === 'text';
+  return false;
+}
+
 // Desktop: Esc backs out a step, Delete clears the marked nodes, the number
-// keys switch course and the arrows walk the tab strip.
+// keys switch course and the arrows walk the tab strip. The letters are in
+// SHORTCUTS, which is also the list the ? overlay shows.
 window.addEventListener('keydown', (e) => {
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
   const focus = document.activeElement;
   const typing =
     focus instanceof HTMLInputElement ||
     focus instanceof HTMLTextAreaElement ||
     focus instanceof HTMLSelectElement;
+  // With the list up it is the only thing on screen: Esc and ? close it, and
+  // nothing else gets to act on a course the user cannot see.
+  if (!shortcutsOverlay.hidden) {
+    if (e.key === 'Escape' || e.key === '?') {
+      hideShortcuts();
+      e.preventDefault();
+    }
+    return;
+  }
+  // The one shortcut that keeps its modifier. A field has its own undo, and
+  // outside editing mode there is no history to undo — it is dropped on exit.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z') {
+    if (typing || !editingMode || editHistory.length === 0) return;
+    undoEdit();
+    e.preventDefault();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'Escape') {
     // A pull in progress is the innermost thing to back out of: drop it and
     // stay in editing mode, with the course exactly as it was.
@@ -182,12 +238,63 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  if (e.key === 'Enter' && enterIsFree(focus) && !findButton.disabled) {
+    findButton.click();
+    e.preventDefault();
+    return;
+  }
+  if (!typing) {
+    // Each letter stands in for the control that does the same thing, and is
+    // ignored exactly when that control is unavailable.
+    const key = e.key.toLowerCase();
+    if (e.key === '?') {
+      showShortcuts();
+      e.preventDefault();
+      return;
+    }
+    if (key === 't' && !searching && lastResult) {
+      seed += 1;
+      seedInput.value = String(seed);
+      startSearch();
+      e.preventDefault();
+      return;
+    }
+    if (key === 'g' && !resultEls.downloadButton.hidden) {
+      resultEls.downloadButton.click();
+      e.preventDefault();
+      return;
+    }
+    if (key === 'e' && lastResult) {
+      toggleEditing(lastResult);
+      e.preventDefault();
+      return;
+    }
+    if (key === 'n' && editingMode) {
+      editNodesButton.click();
+      e.preventDefault();
+      return;
+    }
+    if (key === 'v' && !addViaButton.disabled) {
+      addViaButton.click();
+      e.preventDefault();
+      return;
+    }
+  }
   if (candidates.length < 2) return;
   const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-  if (step !== 0 && courseTabs.contains(focus)) {
-    const next = Math.min(candidates.length - 1, Math.max(0, shownCandidate + step));
-    showCandidate(next);
-    (courseTabs.children[next] as HTMLElement | undefined)?.focus();
+  // The arrows belong to the strip everywhere but over the map, where Leaflet
+  // pans with them. Requiring a tab to hold the focus was the bug: selecting a
+  // course rebuilds the strip, so the click or number key that chose one threw
+  // away the focus the arrows then asked for.
+  if (step !== 0 && !typing && !mapEl.contains(focus)) {
+    // Tabs fill one at a time, and one still being searched for cannot be
+    // shown, so the step carries on over it to the next course that has landed.
+    let next = shownCandidate + step;
+    while (next >= 0 && next < candidates.length && !candidates[next]) next += step;
+    if (next >= 0 && next < candidates.length) {
+      showCandidate(next);
+      (courseTabs.children[next] as HTMLElement | undefined)?.focus();
+    }
     e.preventDefault();
     return;
   }

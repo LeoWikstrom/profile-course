@@ -15,19 +15,27 @@
     <div id="course-tabs" role="tablist" aria-label="Courses found" hidden></div>
     <div id="edit-bar" hidden>
       <button id="edit-exit" title="Exit editing (Esc)" aria-label="Exit editing">✕</button>
-      <button id="edit-undo" title="Undo the last edit">↶ Undo</button>
+      <button id="edit-undo" title="Undo the last edit (Ctrl+Z)">↶ Undo</button>
       <button id="edit-nodes" aria-pressed="false"
-        title="Node editing: pull a dot to move it, tap a dot to delete it, hold one to mark it, tap elsewhere to add one">Nodes</button>
+        title="Node editing: pull a dot to move it, tap a dot to delete it, hold one to mark it, tap elsewhere to add one (N)">Nodes</button>
       <button id="edit-delete" hidden title="Delete the marked points (Del)">Delete</button>
     </div>
     <div id="via-bar" hidden>
       <button id="via-cancel" title="Stop placing a via point" aria-label="Stop placing a via point">✕</button>
     </div>
     <p id="edit-status" hidden></p>
+    <div id="shortcuts-overlay" role="dialog" aria-modal="true"
+      aria-label="Keyboard shortcuts" hidden>
+      <div id="shortcuts-card">
+        <button id="shortcuts-close" title="Close (Esc)" aria-label="Close">✕</button>
+        <h2>Keyboard shortcuts</h2>
+        <dl id="shortcuts-overlay-list" class="shortcuts"></dl>
+      </div>
+    </div>
     <div id="sheet">
       <div id="sheet-top">
         <div id="sheet-handle" role="button" aria-label="Resize the panel" tabindex="0"></div>
-        <button id="download-gpx" hidden title="Download GPX">GPX ⤓</button>
+        <button id="download-gpx" hidden title="Download GPX (G)">GPX ⤓</button>
       </div>
       <section id="controls">
         <h1>Profile Course</h1>
@@ -47,7 +55,7 @@
           <p class="hint" id="course-advanced-body"></p>
         </details>
         <div id="course-actions" class="row" hidden></div>
-        <button id="find-button" disabled>Find course</button>
+        <button id="find-button" title="Find course (Enter)" disabled>Find course</button>
         <button id="cancel-button" hidden>Cancel</button>
         <p class="hint" id="start-hint">Tap the map to set a start point.</p>
         <label class="control">
@@ -85,7 +93,7 @@
               style="width: 60px" /> km
           </span>
           <ul id="via-list" class="hint"></ul>
-          <button id="add-via" disabled>Add via point</button>
+          <button id="add-via" title="Add a via point (V)" disabled>Add via point</button>
         </div>
         <details id="areas-panel" class="section">
           <summary>Offline areas</summary>
@@ -193,6 +201,12 @@
               <option value="walk">Random walk (baseline)</option>
             </select>
           </label>
+          <details id="shortcuts-panel" class="subsection">
+            <summary>Keyboard shortcuts</summary>
+            <p class="hint">For a keyboard; on a phone every one of these is a button or a
+              gesture. Press ? to call the same list up over the map.</p>
+            <dl id="shortcuts-help" class="shortcuts hint"></dl>
+          </details>
         </details>
       </section>
     </div>

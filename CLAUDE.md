@@ -303,6 +303,21 @@ distinguishes running from driving.
       is a tie-breaker between otherwise similar ways, exposed as the "Unrun ground" weight in
       Advanced settings; don't raise it without trace coverage far denser than a fifth.
 
+**Keyboard shortcuts** live in one list, `SHORTCUTS` in `src/ui/shortcuts.ts`, rendered into both
+the `?` overlay and a section of Advanced settings — a phone has no `?` to press, so the panel is
+the only place the list can be read there. Each letter stands in for a control and does nothing
+when that control is unavailable (`G` only with a course to download, `N` only while editing), so
+the shortcut cannot reach a state the buttons cannot. Ctrl/⌘ Z is the only one that keeps a
+modifier, and it is scoped to editing mode because `exitEditing` drops the history anyway. Enter
+means Find course only where nothing else answers it (`enterIsFree`): on a button, a summary, a
+link or a file input it would steal the panel's own keyboard use. With the overlay up, every key
+but Esc and `?` is swallowed rather than acting on a course the user cannot see.
+The arrows walk the course strip from anywhere **except over the map**, where Leaflet pans with
+them. They first asked for the focus to be inside the strip, as a tablist conventionally would,
+and so never worked: selecting a course rebuilds the strip, so the click or number key that chose
+one destroyed the very button the arrows wanted focused. They also step over a tab still being
+searched for, since such a tab cannot be shown.
+
 Panel sections (Offline areas, Advanced settings) are `details.section`: a
 full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as
 fine print and left only the words themselves tappable.
