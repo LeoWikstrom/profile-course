@@ -21,7 +21,12 @@ export interface SheetController {
  * tapping it collapses an open sheet, or re-opens a collapsed one at whichever
  * stop it came from.
  */
-export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetController {
+export function initSheet(
+  sheet: HTMLElement,
+  handle: HTMLElement,
+  /** Told whenever the sheet settles on a stop (not during the drag). */
+  onLevel?: (level: SheetLevel) => void,
+): SheetController {
   let level: SheetLevel = 'full';
   let lastOpen: Exclude<SheetLevel, 'collapsed'> = 'full';
   let dragging = false;
@@ -71,6 +76,7 @@ export function initSheet(sheet: HTMLElement, handle: HTMLElement): SheetControl
     applied = offset;
     spacer.style.height = `${Math.round(offset)}px`;
     apply(offset, true);
+    onLevel?.(l);
   }
 
   // Results and panels change the sheet's height, which moves every stop.

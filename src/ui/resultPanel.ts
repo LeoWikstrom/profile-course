@@ -7,7 +7,8 @@ export interface ResultElements {
   stats: HTMLElement;
   advanced: HTMLDetailsElement;
   advancedBody: HTMLElement;
-  actions: HTMLElement;
+  /** Icon buttons on the map's right edge, under the zoom control. */
+  mapButtons: HTMLElement;
   downloadButton: HTMLButtonElement;
 }
 
@@ -30,38 +31,50 @@ export function renderCourseTabs(
   selected: number,
   onSelect: (index: number) => void,
 ): void {
-  el.textContent = '';
   el.hidden = tabs.length < 2;
   // The strip floats over the map, so whatever else is up there moves down.
   document.documentElement.style.setProperty('--tab-strip-h', el.hidden ? '0px' : '42px');
-  if (el.hidden) return;
+  if (el.hidden) {
+    el.textContent = '';
+    return;
+  }
+  // Keep the buttons across redraws where only their state changed: a fresh
+  // element has no old style to transition from, so switching tabs could not
+  // animate — and it also destroyed the focused tab under the arrow keys.
+  if (el.childElementCount !== tabs.length) {
+    el.textContent = '';
+    tabs.forEach((_, i) => {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.setAttribute('role', 'tab');
+      tab.addEventListener('click', () => onSelect(i));
+      el.appendChild(tab);
+    });
+  }
   tabs.forEach(({ score, fraction }, i) => {
-    const tab = document.createElement('button');
-    tab.type = 'button';
-    tab.setAttribute('role', 'tab');
+    const tab = el.children[i] as HTMLButtonElement;
     tab.setAttribute('aria-selected', String(i === selected));
     tab.tabIndex = i === selected ? 0 : -1;
+    tab.disabled = score === null;
     if (score === null) {
-      tab.disabled = true;
       const spinner = document.createElement('span');
       spinner.className = 'tab-spinner';
       spinner.setAttribute('aria-hidden', 'true');
+      tab.textContent = '';
       tab.append(spinner, `${i + 1} · ${Math.round(fraction * 100)} %`);
       tab.title = `Course ${i + 1} is still being searched for`;
     } else {
       tab.textContent = `${i + 1} · ${score.toFixed(1)}`;
       tab.title = `Course ${i + 1}, mismatch ${score.toFixed(1)} — or press ${i + 1}`;
     }
-    tab.addEventListener('click', () => onSelect(i));
-    el.appendChild(tab);
   });
 }
 
 export function hideResult(els: ResultElements): void {
   els.stats.hidden = true;
   els.advanced.hidden = true;
-  els.actions.hidden = true;
-  els.actions.textContent = '';
+  els.mapButtons.hidden = true;
+  els.mapButtons.textContent = '';
   els.downloadButton.hidden = true;
 }
 
@@ -109,33 +122,50 @@ export function renderResult(
     a.download = `${name.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'course'}.gpx`;
     a.click();
     URL.revokeObjectURL(url);
+    // Chrome on Android saves without a word, which reads as nothing having
+    // happened — and got the same course downloaded thirty times over.
+    els.downloadButton.textContent = 'Saved ✓';
+    setTimeout(() => (els.downloadButton.textContent = 'GPX ⤓'), 2000);
   };
 
-  els.actions.hidden = false;
-  els.actions.textContent = '';
-  const actionButton = document.createElement('button');
-  actionButton.textContent = action.label;
-  actionButton.addEventListener('click', action.onAction);
-  els.actions.appendChild(actionButton);
+  els.mapButtons.hidden = false;
+  els.mapButtons.textContent = '';
+  const iconButton = (icon: string, label: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = icon;
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.addEventListener('click', onClick);
+    els.mapButtons.appendChild(b);
+    return b;
+  };
 
   if (onEdit) {
-    const edit = document.createElement('button');
-    edit.textContent = onEdit.editing ? 'Exit editing' : 'Edit';
-    edit.title = 'Editing mode: pull the course where you want it, or tap a point then its destination';
-    edit.addEventListener('click', onEdit.toggle);
-    els.actions.appendChild(edit);
+    const edit = iconButton(
+      '✎',
+      onEdit.editing
+        ? 'Exit editing'
+        : 'Edit: pull the course where you want it, or tap a point then its destination',
+      onEdit.toggle,
+    );
+    edit.setAttribute('aria-pressed', String(onEdit.editing));
+    // Does not follow the others up when the tall sheet covers the column:
+    // editing needs the map, so it waits behind the menu instead.
+    edit.classList.add('map-edit');
   }
 
-  const copyLink = document.createElement('button');
-  copyLink.textContent = 'Copy link';
-  copyLink.addEventListener('click', async () => {
+  const copyLink = iconButton('🔗', 'Copy link to this course', async () => {
     try {
       await navigator.clipboard.writeText(location.href);
-      copyLink.textContent = 'Link copied';
-      setTimeout(() => (copyLink.textContent = 'Copy link'), 1500);
+      copyLink.textContent = '✓';
+      setTimeout(() => (copyLink.textContent = '🔗'), 1500);
     } catch {
-      copyLink.textContent = location.href;
+      // No clipboard over plain http (the phone-testing setup): show the link
+      // in something it can be copied out of by hand.
+      window.prompt('Copy the link:', location.href);
     }
   });
-  els.actions.appendChild(copyLink);
+
+  iconButton(action.label === 'Try another' ? '🎲' : '↻', action.label, action.onAction);
 }

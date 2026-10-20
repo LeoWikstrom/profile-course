@@ -15,6 +15,37 @@ export function slideIn(el: HTMLElement): void {
 }
 
 /**
+ * The reverse of a row's staggered CSS entrance: the elements leave to the
+ * left, rightmost first, and `done` fires when the last is out — which is
+ * when the caller may actually hide them. The animations are cancelled after
+ * `done` so their end state cannot linger over the next entrance.
+ */
+export function slideOutRow(els: HTMLElement[], done: () => void): void {
+  if (stillness() || els.length === 0) {
+    done();
+    return;
+  }
+  const anims = els.map((el, i) =>
+    el.animate(
+      [
+        { transform: 'none', opacity: 1 },
+        { transform: 'translateX(-10px)', opacity: 0 },
+      ],
+      {
+        duration: DURATION_MS,
+        easing: 'ease-in',
+        delay: (els.length - 1 - i) * 55,
+        fill: 'both',
+      },
+    ),
+  );
+  void Promise.allSettled(anims.map((a) => a.finished)).then(() => {
+    done();
+    for (const a of anims) a.cancel();
+  });
+}
+
+/**
  * FLIP: call before rebuilding a list to snapshot where its items are, then
  * pass the snapshot and the rebuilt elements to `playReorder` so items slide
  * from their old positions to their new ones.

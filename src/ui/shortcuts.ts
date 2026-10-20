@@ -30,3 +30,11 @@ export function renderShortcuts(into: HTMLElement): void {
     into.append(dt, dd);
   }
 }
+
+/** The same list as a node for the dialog. */
+export function shortcutsContent(): HTMLElement {
+  const dl = document.createElement('dl');
+  dl.className = 'shortcuts';
+  renderShortcuts(dl);
+  return dl;
+}

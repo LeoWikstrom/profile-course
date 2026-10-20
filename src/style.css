@@ -2,6 +2,22 @@
   box-sizing: border-box;
 }
 
+:root {
+  color-scheme: light dark;
+  /* Lets block-size animate to auto, for the sections' opening transition. */
+  interpolate-size: allow-keywords;
+  /* The panel is dark grey rather than black; a section's interior sits a step
+     apart from it, sunk behind an inset shadow. */
+  --panel-bg: light-dark(#ffffff, #26282c);
+  --section-bg: light-dark(#f2f3f5, #2f3237);
+  --edge: light-dark(rgb(0 0 0 / 0.16), rgb(255 255 255 / 0.14));
+  /* The accent, in one place — still under audition (see the tab colours). */
+  --accent: #2563eb;
+  --accent-deep: #1d4ed8;
+  /* Desaturated accent: subgroup headings and their rules. */
+  --accent-muted: color-mix(in srgb, var(--accent) 45%, GrayText);
+}
+
 html,
 body {
   margin: 0;
@@ -25,7 +41,7 @@ body {
   right: 0;
   bottom: 0;
   z-index: 1000;
-  background: Canvas;
+  background: var(--panel-bg);
   color: CanvasText;
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -2px 12px rgb(0 0 0 / 0.25);
@@ -47,7 +63,7 @@ body {
   min-height: 42px;
   margin: -4px -16px 4px;
   padding: 4px 16px 0;
-  background: Canvas;
+  background: var(--panel-bg);
 }
 
 #sheet-handle {
@@ -103,6 +119,14 @@ input[type='range'] {
   min-width: 0;
 }
 
+/* A small button beside an input, not the panel-wide kind. */
+.inline-button {
+  width: auto;
+  min-height: 40px;
+  padding: 0 12px;
+  flex: none;
+}
+
 input[type='number'],
 select {
   width: 100%;
@@ -126,24 +150,32 @@ select {
 }
 
 /*
- * Whole sections of the panel, not footnotes: a full-width row with a chevron,
- * tall enough for a thumb. As small grey hint text they read as fine print and
- * only the words themselves were tappable.
+ * Whole sections of the panel: the header is a full-width row of the panel's
+ * own surface, ruled off edge to edge above and below, and the interior sits
+ * a step apart, sunk behind a hard edge and an inset shadow — pressed into
+ * the panel rather than printed on it.
  */
+details.section {
+  margin: 16px -16px;
+}
+
+/* Adjacent sections share one dividing line: sibling margins collapse to
+   16 − 17 = −1 px, so the second's top border lies on the first's bottom. */
+details.section + details.section {
+  margin-top: -17px;
+}
+
 details.section > summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 0 12px;
-  margin: 12px 0;
-  border: 1px solid GrayText;
-  border-radius: 8px;
-  background: color-mix(in srgb, CanvasText 7%, Canvas);
+  min-height: 48px;
+  padding: 0 16px;
+  border-block: 1px solid var(--edge);
+  background: var(--panel-bg);
   color: CanvasText;
   font-size: 1rem;
   font-weight: 600;
-  cursor: pointer;
   list-style: none;
 }
 
@@ -155,12 +187,36 @@ details.section > summary::after {
   content: '\25b8';
   display: inline-block;
   margin-left: auto;
+  font-size: 1.4rem;
+  line-height: 1;
   color: GrayText;
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease;
 }
 
 details.section[open] > summary::after {
   transform: rotate(90deg);
+}
+
+.section-body {
+  padding: 14px 16px 16px;
+  background: var(--section-bg);
+  box-shadow:
+    inset 0 10px 10px -10px rgb(0 0 0 / 0.5),
+    inset 0 -8px 8px -8px rgb(0 0 0 / 0.3);
+}
+
+/* Opening grows the section, revealing what is inside; a browser without
+   ::details-content or interpolate-size opens instantly, styled the same. */
+details.section::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size 0.25s ease,
+    content-visibility 0.25s allow-discrete;
+}
+
+details.section[open]::details-content {
+  block-size: auto;
 }
 
 /* Room before the buttons that follow, open or shut. */
@@ -168,39 +224,92 @@ details.section[open] > summary::after {
   margin-bottom: 14px;
 }
 
-/* A section inside a section: the same tappable row, indented and quieter. */
-details.subsection > summary {
+/* A named group of controls: a quiet heading over a dividing line, like the
+   onthegomap panel. Items with no group of their own just sit above the first. */
+.subgroup {
+  margin-top: 16px;
+}
+
+/* HEADING ———— : the divider shares the row, filling it to the right. */
+.subgroup > h3 {
   display: flex;
   align-items: center;
-  min-height: 40px;
-  padding: 0 10px;
-  margin: 10px 0 10px 10px;
-  border: 1px dashed GrayText;
-  border-radius: 8px;
-  color: CanvasText;
-  font-size: 0.9rem;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 0.85rem;
   font-weight: 600;
-  cursor: pointer;
-  list-style: none;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-muted);
 }
 
-details.subsection > summary::-webkit-details-marker {
-  display: none;
+.subgroup > h3::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid color-mix(in srgb, var(--accent-muted) 55%, transparent);
 }
 
-details.subsection > summary::after {
-  content: '\25b8';
-  margin-left: auto;
+/* The GPX chooser and the search button share the top row. */
+#gpx-row {
+  align-items: flex-end;
+}
+
+#gpx-row > .control {
+  flex: 1;
+  min-width: 0;
+}
+
+#gpx-row > #find-button {
+  width: auto;
+  flex: none;
+  padding: 0 16px;
+}
+
+/* One weight: name with its ⓘ, then a small box and a slider on one row. */
+.weight {
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+}
+
+.weight > .row {
+  align-items: center;
+  margin-top: 4px;
+}
+
+.weight input[type='number'] {
+  flex: none;
+  width: 76px;
+}
+
+.weight input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.weight input[type='checkbox'] {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+/* ⓘ: hover says it on desktop, a tap opens the same text as a dialog. */
+.info-button {
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin-left: 2px;
+  border: none;
+  background: none;
   color: GrayText;
-  transition: transform 0.15s ease;
+  font-size: 0.95rem;
+  vertical-align: middle;
+  cursor: help;
 }
 
-details.subsection[open] > summary::after {
-  transform: rotate(90deg);
-}
-
-details.subsection > *:not(summary) {
-  margin-left: 10px;
+.info-button:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  color: GrayText;
 }
 
 button {
@@ -209,15 +318,45 @@ button {
   font-size: 1rem;
   border-radius: 8px;
   border: 1px solid GrayText;
-  background: Canvas;
+  background: transparent;
   color: CanvasText;
+  cursor: pointer;
   transition:
     background-color 0.15s ease,
+    filter 0.15s ease,
     transform 0.08s ease;
+}
+
+button:disabled {
+  color: GrayText;
+  cursor: default;
 }
 
 button:active {
   transform: scale(0.97);
+}
+
+/* Everything clickable says so, the details openers included. */
+summary {
+  cursor: pointer;
+}
+
+/* any-hover, not hover: on a phone the primary pointer is the touchscreen,
+   so (hover: hover) is false even with a mouse attached in desktop mode. */
+@media (any-hover: hover) {
+  button:not(:disabled):hover {
+    filter: brightness(1.15);
+  }
+  summary:hover {
+    color: CanvasText;
+  }
+  details.section > summary:hover {
+    background: color-mix(in srgb, CanvasText 7%, var(--panel-bg));
+  }
+  .info-button:not(:disabled):hover {
+    filter: none;
+    color: CanvasText;
+  }
 }
 
 @keyframes fade-in {
@@ -234,7 +373,7 @@ button:active {
 /* Appearing when a course arrives: display changes restart the animation. */
 #course-stats,
 #course-advanced,
-#course-actions {
+#map-buttons {
   animation: fade-in 0.2s ease-out;
 }
 
@@ -258,8 +397,8 @@ button:active {
 }
 
 button:not(:disabled) {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--accent);
+  border-color: var(--accent);
   color: white;
 }
 
@@ -305,6 +444,31 @@ button:not(:disabled) {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
 }
 
+@keyframes slide-from-left {
+  from {
+    transform: translateX(-10px);
+    opacity: 0;
+  }
+}
+
+/* Entering edit mode, the buttons follow each other in, left to right —
+   showing the bar flips display from none, which restarts these. */
+#edit-bar > button {
+  animation: slide-from-left 0.18s ease-out backwards;
+}
+
+#edit-bar > button:nth-child(2) {
+  animation-delay: 55ms;
+}
+
+#edit-bar > button:nth-child(3) {
+  animation-delay: 110ms;
+}
+
+#edit-bar > button:nth-child(4) {
+  animation-delay: 165ms;
+}
+
 #edit-bar > button:disabled {
   background: Canvas;
   color: GrayText;
@@ -327,8 +491,8 @@ button:not(:disabled) {
   width: auto;
   min-height: 32px;
   padding: 0 12px;
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
   z-index: 1;
 }
@@ -345,8 +509,12 @@ button:not(:disabled) {
   display: flex;
   align-items: flex-start;
   gap: 0;
-  height: 42px;
-  padding: 0 52px 0 8px;
+  /* The tabs are 26–38px; the extra height is padding for their drop shadows,
+     which the overflow clip would otherwise cut to a hard bottom edge. The
+     published --tab-strip-h stays 42px — the surplus is transparent and lets
+     taps through. */
+  height: 54px;
+  padding: 0 52px 12px 8px;
   overflow-x: auto;
   scrollbar-width: none;
   pointer-events: none;
@@ -373,9 +541,15 @@ button:not(:disabled) {
   background: color-mix(in srgb, CanvasText 14%, Canvas);
   color: GrayText;
   box-shadow: inset 0 8px 10px -8px rgb(0 0 0 / 0.35);
+  /* Switching tabs morphs the old front tab back and the new one forward —
+     the buttons are kept across redraws so there is a style to morph from. */
   transition:
-    min-height 0.12s ease,
-    background-color 0.15s ease;
+    min-height 0.15s ease,
+    margin 0.15s ease,
+    padding 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 #course-tabs > button[aria-selected='true'] {
@@ -385,11 +559,34 @@ button:not(:disabled) {
   padding: 0 16px;
   position: relative;
   z-index: 1;
-  background: #2563eb;
+  background: var(--accent);
   color: #fff;
-  border-color: #1d4ed8;
+  border-color: var(--accent-deep);
   font-weight: 600;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
+}
+
+/* TEMPORARY accent audition (Leo, 2026-10-20): each tab wears one of the four
+   candidate accents — raspberry, trail orange, forest green, teal — so they
+   can be judged live over real map tiles. Remove once one is picked. */
+#course-tabs > button:nth-child(1)[aria-selected='true'] {
+  background: #e11d48;
+  border-color: #be123c;
+}
+
+#course-tabs > button:nth-child(2)[aria-selected='true'] {
+  background: #f97316;
+  border-color: #ea580c;
+}
+
+#course-tabs > button:nth-child(3)[aria-selected='true'] {
+  background: #059669;
+  border-color: #047857;
+}
+
+#course-tabs > button:nth-child(4)[aria-selected='true'] {
+  background: #0d9488;
+  border-color: #0f766e;
 }
 
 #course-tabs > button:disabled {
@@ -433,12 +630,53 @@ button:not(:disabled) {
   }
 }
 
-#course-actions > button {
-  flex: 1;
+/* Course actions as icons on the map's right edge, under the zoom control,
+   matching its buttons' 30px and keeping the same 8px step to it as between
+   themselves (52px: measured against the zoom control on the phone). */
+#map-buttons {
+  position: fixed;
+  top: calc(52px + var(--tab-strip-h, 0px));
+  right: 12px;
+  /* Below the sheet (1000): whatever the sheet covers, it covers. */
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition:
+    top 0.25s ease,
+    right 0.25s ease;
 }
 
-#course-actions {
-  margin-bottom: 14px;
+/* The tall sheet covers the column, so the link and try-another buttons climb
+   into the strip the sheet cannot reach, a row beside the zoom control. The
+   edit button stays behind — editing needs the map, not a full-screen menu. */
+body.sheet-tall #map-buttons {
+  top: 8px;
+  right: 54px;
+  flex-direction: row;
+}
+
+body.sheet-tall #map-buttons > .map-edit {
+  display: none;
+}
+
+#map-buttons[hidden] {
+  display: none;
+}
+
+#map-buttons > button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  font-size: 0.95rem;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+
+#map-buttons > button[aria-pressed='true'] {
+  background: #7c3aed;
+  border-color: #7c3aed;
 }
 
 progress {
@@ -485,7 +723,7 @@ progress {
   height: 22px;
   margin-top: -9px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--accent);
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
@@ -495,7 +733,7 @@ progress {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--accent);
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
@@ -626,9 +864,9 @@ progress {
   animation: marker-in 0.15s ease-out;
 }
 
-/* Over the sheet as well as the map: the list is about the whole window, and a
-   panel section would be half hidden behind the one it describes. */
-#shortcuts-overlay {
+/* The app's one modal dialog (shortcuts, weight info, the manual) — over the
+   sheet as well as the map, since its subject is the whole window. */
+#dialog-overlay {
   position: fixed;
   inset: 0;
   z-index: 1200;
@@ -639,11 +877,11 @@ progress {
   background: rgb(0 0 0 / 0.45);
 }
 
-#shortcuts-overlay[hidden] {
+#dialog-overlay[hidden] {
   display: none;
 }
 
-#shortcuts-card {
+#dialog-card {
   position: relative;
   width: min(100%, 420px);
   max-height: 100%;
@@ -655,14 +893,14 @@ progress {
   box-shadow: 0 2px 16px rgb(0 0 0 / 0.4);
 }
 
-#shortcuts-card > h2 {
+#dialog-card > h2 {
   margin: 0 0 10px;
   /* Clear of the ✕ in the corner. */
   padding-right: 44px;
   font-size: 1.1rem;
 }
 
-#shortcuts-close {
+#dialog-close {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -695,6 +933,73 @@ dl.shortcuts kbd {
   white-space: nowrap;
 }
 
+/* The manual: a long read inside the dialog card. */
+#dialog-body h3 {
+  margin: 14px 0 4px;
+  font-size: 0.95rem;
+}
+
+#dialog-body p {
+  margin: 6px 0;
+  font-size: 0.9rem;
+}
+
+/* The legend: what the colours on the map mean. Line swatches for the course,
+   dots for the markers; each sets its colour in --c inline. */
+#legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#legend > li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.swatch {
+  flex: none;
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--c);
+}
+
+.swatch.faded {
+  opacity: 0.45;
+}
+
+.swatch.dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 2px rgb(0 0 0 / 0.5);
+}
+
+.swatch.finish {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #111;
+}
+
+.swatch.zone {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c) 10%, transparent);
+  border: 2px solid var(--c);
+}
+
+/* No keyboard on a phone — the subsection only earns its place on desktop. */
+#shortcuts-subgroup {
+  display: none;
+}
+
 @media (min-width: 900px) {
   #sheet {
     top: 0;
@@ -702,6 +1007,8 @@ dl.shortcuts kbd {
     width: 380px;
     max-height: none;
     border-radius: 0;
+    /* A fixed left panel casts to the right, onto the map. */
+    box-shadow: 3px 0 14px rgb(0 0 0 / 0.35);
   }
   #sheet-handle {
     display: none;
@@ -717,5 +1024,8 @@ dl.shortcuts kbd {
   #via-bar,
   #edit-status {
     left: 388px;
+  }
+  #shortcuts-subgroup {
+    display: block;
   }
 }

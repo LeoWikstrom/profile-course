@@ -6,22 +6,32 @@ import { loadSession, requestPersistentStorage, saveSession } from './session';
 import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderInteractiveChart } from './ui/profileChart';
-import { captureTops, playReorder, slideIn } from './ui/animate';
-import {
-  hideResult,
-  renderCourseTabs,
-  renderResult,
-  type ResultElements,
-} from './ui/resultPanel';
+import { captureTops, playReorder, slideIn, slideOutRow } from './ui/animate';
+import { hideResult, renderCourseTabs, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
-import { renderShortcuts } from './ui/shortcuts';
+import { closeDialog, dialogOpen, openDialog } from './ui/dialog';
+import { manualContent } from './ui/manual';
+import { renderShortcuts, shortcutsContent } from './ui/shortcuts';
+import { initWeightControls } from './ui/weights';
 import SearchWorker from './search/worker?worker';
 
 const mapEl = document.getElementById('map') as HTMLElement;
-const map = createMap('map');
-const worker = new SearchWorker();
 const sheetEl = document.getElementById('sheet') as HTMLElement;
-const sheet = initSheet(sheetEl, document.getElementById('sheet-handle') as HTMLElement);
+
+/** The sheet covers the window's bottom on a phone and its left on desktop. */
+function sheetObscures(): { left: number; bottom: number } {
+  const r = sheetEl.getBoundingClientRect();
+  if (window.matchMedia('(min-width: 900px)').matches) return { left: r.right, bottom: 0 };
+  return { left: 0, bottom: Math.max(0, window.innerHeight - r.top) };
+}
+
+const map = createMap('map', sheetObscures);
+const worker = new SearchWorker();
+// The tall sheet covers the spot the map icon buttons sit in, so CSS moves
+// them up beside the zoom control while the sheet is at its top stop.
+const sheet = initSheet(sheetEl, document.getElementById('sheet-handle') as HTMLElement, (level) =>
+  document.body.classList.toggle('sheet-tall', level === 'tall'),
+);
 
 function send(msg: MainToWorker): void {
   worker.postMessage(msg);
@@ -40,7 +50,7 @@ const resultEls: ResultElements = {
   stats: document.getElementById('course-stats') as HTMLElement,
   advanced: document.getElementById('course-advanced') as HTMLDetailsElement,
   advancedBody: document.getElementById('course-advanced-body') as HTMLElement,
-  actions: document.getElementById('course-actions') as HTMLElement,
+  mapButtons: document.getElementById('map-buttons') as HTMLElement,
   downloadButton: document.getElementById('download-gpx') as HTMLButtonElement,
 };
 const editBar = document.getElementById('edit-bar') as HTMLDivElement;
@@ -127,7 +137,10 @@ const courseTabs = document.getElementById('course-tabs') as HTMLElement;
 function drawCourseTabs(): void {
   renderCourseTabs(
     courseTabs,
-    candidates.map((c, i) => ({ score: c?.course.score ?? null, fraction: candidateProgress[i] ?? 0 })),
+    candidates.map((c, i) => ({
+      score: c?.course.score ?? null,
+      fraction: candidateProgress[i] ?? 0,
+    })),
     shownCandidate,
     showCandidate,
   );
@@ -146,30 +159,25 @@ function showCandidate(index: number): void {
   persistSession();
 }
 
-const shortcutsOverlay = document.getElementById('shortcuts-overlay') as HTMLDivElement;
-const shortcutsClose = document.getElementById('shortcuts-close') as HTMLButtonElement;
-renderShortcuts(document.getElementById('shortcuts-overlay-list') as HTMLElement);
 renderShortcuts(document.getElementById('shortcuts-help') as HTMLElement);
+initWeightControls();
+(document.getElementById('open-manual') as HTMLButtonElement).addEventListener('click', () =>
+  openDialog('Manual', manualContent()),
+);
 
-function showShortcuts(): void {
-  shortcutsOverlay.hidden = false;
-  slideIn(shortcutsOverlay);
-  shortcutsClose.focus();
+// The GPS traces story is too long for the panel: a short hint sits there,
+// and the ⓘ opens the full text (kept in the HTML, hidden) as a dialog.
+{
+  const full = document.getElementById('traces-info-text') as HTMLElement;
+  const info = document.getElementById('traces-info') as HTMLButtonElement;
+  info.title = (full.textContent ?? '').replace(/\s+/g, ' ').trim();
+  info.addEventListener('click', () => {
+    const p = full.cloneNode(true) as HTMLElement;
+    p.hidden = false;
+    p.removeAttribute('id');
+    openDialog('GPS traces', p);
+  });
 }
-
-function hideShortcuts(): void {
-  if (shortcutsOverlay.hidden) return;
-  shortcutsOverlay.hidden = true;
-  // Focus was moved onto the Close button, which is now gone from the page.
-  shortcutsClose.blur();
-}
-
-shortcutsClose.addEventListener('click', hideShortcuts);
-// Anywhere off the card: the overlay covers the window, so a tap on it is a
-// tap on the map or the panel the user meant to get back to.
-shortcutsOverlay.addEventListener('click', (e) => {
-  if (e.target === shortcutsOverlay) hideShortcuts();
-});
 
 /**
  * Enter means Find course, but only where nothing else already answers it: a
@@ -191,11 +199,11 @@ window.addEventListener('keydown', (e) => {
     focus instanceof HTMLInputElement ||
     focus instanceof HTMLTextAreaElement ||
     focus instanceof HTMLSelectElement;
-  // With the list up it is the only thing on screen: Esc and ? close it, and
+  // With a dialog up it is the only thing on screen: Esc and ? close it, and
   // nothing else gets to act on a course the user cannot see.
-  if (!shortcutsOverlay.hidden) {
+  if (dialogOpen()) {
     if (e.key === 'Escape' || e.key === '?') {
-      hideShortcuts();
+      closeDialog();
       e.preventDefault();
     }
     return;
@@ -248,14 +256,12 @@ window.addEventListener('keydown', (e) => {
     // ignored exactly when that control is unavailable.
     const key = e.key.toLowerCase();
     if (e.key === '?') {
-      showShortcuts();
+      openDialog('Keyboard shortcuts', shortcutsContent());
       e.preventDefault();
       return;
     }
     if (key === 't' && !searching && lastResult) {
-      seed += 1;
-      seedInput.value = String(seed);
-      startSearch();
+      tryAnother();
       e.preventDefault();
       return;
     }
@@ -387,17 +393,19 @@ function showResult(
   renderResult(
     resultEls,
     result.course,
-    action ?? {
-      label: 'Try another',
-      onAction: () => {
-        seed += 1;
-        seedInput.value = String(seed);
-        startSearch();
-      },
-    },
+    action ?? { label: 'Try another', onAction: tryAnother },
     { editing: editingMode, toggle: () => toggleEditing(result) },
     courseName(),
   );
+}
+
+/** No seed is better than any other, so a fresh one is drawn, not the next. */
+const randomSeed = (): number => 1 + Math.floor(Math.random() * 9999);
+
+function tryAnother(): void {
+  seed = randomSeed();
+  seedInput.value = String(seed);
+  startSearch();
 }
 
 /**
@@ -416,16 +424,32 @@ function setEditStatus(text: string): void {
   editStatus.hidden = !editingMode;
 }
 
-/** Exit, Undo and the node submode sit over the map, within thumb reach. */
+/**
+ * Exit, Undo and the node submode sit over the map, within thumb reach.
+ * Showing the bar restarts its buttons' staggered slide-in (CSS): display
+ * none → flex restarts child animations.
+ */
+let editBarLeaving = false;
 function refreshEditBar(): void {
-  const wasHidden = editBar.hidden;
-  editBar.hidden = !editingMode;
+  if (editingMode) {
+    editBarLeaving = false;
+    editBar.hidden = false;
+  } else if (!editBar.hidden && !editBarLeaving) {
+    // Leaving plays the entrance stagger in reverse; the bar is only really
+    // hidden once the last button is out.
+    editBarLeaving = true;
+    const buttons = [...editBar.children].filter(
+      (b): b is HTMLElement => b instanceof HTMLElement && !b.hidden,
+    );
+    slideOutRow(buttons, () => {
+      editBarLeaving = false;
+      if (!editingMode) editBar.hidden = true;
+    });
+  }
   editUndoButton.disabled = editHistory.length === 0;
   editNodesButton.setAttribute('aria-pressed', String(nodeMode));
   editDeleteButton.hidden = markedNodes.size === 0;
-  editDeleteButton.textContent =
-    markedNodes.size > 1 ? `Delete ${markedNodes.size}` : 'Delete';
-  if (wasHidden && !editBar.hidden) slideIn(editBar);
+  editDeleteButton.textContent = markedNodes.size > 1 ? `Delete ${markedNodes.size}` : 'Delete';
 }
 
 /**
@@ -985,7 +1009,7 @@ function startSearch(): void {
     beamWidth: Number(beamWidthInput.value) || 200,
     viaPoints,
     viaToleranceKm:
-      Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 1,
+      Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 0.3,
   });
 }
 
@@ -1000,6 +1024,14 @@ cancelButton.addEventListener('click', () => {
   send({ type: 'cancel' });
   startHint.textContent = downloadingTraces ? 'Trace download cancelled.' : 'Search cancelled.';
   if (downloadingTraces) downloadTracesButton.textContent = 'Stopping…';
+  if (!downloadingTraces) {
+    // The runs fill the tabs in order, so everything past the last course that
+    // landed is a spinner with no search behind it any more.
+    const ready = candidates.filter((c) => c !== null).length;
+    candidates.length = ready;
+    candidateProgress.length = ready;
+    drawCourseTabs();
+  }
   searchDone();
 });
 
@@ -1070,6 +1102,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       // default because there is nothing to use until one has been done.
       if (downloadingTraces && msg.traces.length > 0) {
         useTraces.checked = true;
+        reflectUseTraces();
         persistSession();
       }
       tracesDone();
@@ -1102,7 +1135,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
         areaProgress.value = msg.fraction;
         break;
       }
-      findButton.textContent =
+      // The hint rather than the button: sharing a row with the GPX chooser
+      // left the button too small for "beam search 45 % (best 52.3)".
+      startHint.textContent =
         msg.bestScore !== null
           ? `${msg.stage} ${Math.round(msg.fraction * 100)} % (best ${msg.bestScore.toFixed(1)})`
           : `${msg.stage} ${Math.round(msg.fraction * 100)} %`;
@@ -1222,7 +1257,16 @@ downloadTracesButton.addEventListener('click', () => {
   send({ type: 'downloadTraces', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
 });
 
-useTraces.addEventListener('change', persistSession);
+/** The weight only counts while the box is ticked, so its controls grey with it. */
+function reflectUseTraces(): void {
+  untrackedWeight.disabled = !useTraces.checked;
+  (document.getElementById('ws-untracked') as HTMLInputElement).disabled = !useTraces.checked;
+}
+reflectUseTraces();
+useTraces.addEventListener('change', () => {
+  reflectUseTraces();
+  persistSession();
+});
 
 function setFullProfile(profile: TargetProfile): void {
   fullProfile = profile;
@@ -1542,6 +1586,13 @@ findButton.addEventListener('click', () => {
 
 beamWidthInput.addEventListener('change', persistSession);
 
+const seedRandom = document.getElementById('seed-random') as HTMLButtonElement;
+seedRandom.addEventListener('click', () => {
+  seed = randomSeed();
+  seedInput.value = String(seed);
+  persistSession();
+});
+
 coordSet.addEventListener('click', () => {
   const lat = Number(coordLat.value);
   const lon = Number(coordLon.value);
@@ -1563,6 +1614,7 @@ async function boot(): Promise<void> {
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
     useTraces.checked = session.settings.useTraces ?? false;
+    reflectUseTraces();
     if (session.settings.beamWidth) beamWidthInput.value = String(session.settings.beamWidth);
     viaPoints = session.settings.viaPoints ?? [];
     renderVias();

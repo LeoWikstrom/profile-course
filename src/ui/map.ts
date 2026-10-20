@@ -104,7 +104,11 @@ export interface MapController {
   cancelPull(): boolean;
 }
 
-export function createMap(container: string): MapController {
+export function createMap(
+  container: string,
+  /** How much of the window other UI hides from the map, in px. */
+  obscured?: () => { left: number; bottom: number },
+): MapController {
   const map = L.map(container, { zoomControl: false }).setView([57.7089, 11.9746], 12);
   L.control.zoom({ position: 'topright' }).addTo(map);
   map.createPane(EDIT_PANE).style.zIndex = '680';
@@ -731,7 +735,11 @@ export function createMap(container: string): MapController {
     },
     setStart(start) {
       placeStart(L.latLng(start.lat, start.lon));
-      map.setView([start.lat, start.lon], Math.max(map.getZoom(), 13));
+      map.setView([start.lat, start.lon], Math.max(map.getZoom(), 13), { animate: false });
+      // Centred in the window is under the sheet when the sheet is up: shift
+      // the view so the marker sits in the middle of the map that can be seen.
+      const hid = obscured?.();
+      if (hid) map.panBy([-hid.left / 2, hid.bottom / 2], { animate: false });
     },
     setRadius(meters: number) {
       radiusMeters = meters;

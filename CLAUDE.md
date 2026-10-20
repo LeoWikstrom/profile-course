@@ -272,7 +272,8 @@ went with it: the traces are every mode of travel, cars included, so "people go 
 nothing about whether people *run* here. Do not re-add any of it without a source that
 distinguishes running from driving.
 
-- [x] **Where people actually run** (the one part of that kept, on Leo's call 2026-10-20): the
+- [x] **Where people actually run** (the one part of that kept, on Leo's call 2026-10-20; the
+      panel heading is now simply "GPS traces"): the
       **raw trackpoints API** under its own advanced sub-heading inside Offline areas, with an
       unticked-by-default checkbox in Advanced settings and a note that it takes a long time.
       What makes it answer the objection above is the **pace filter**: within a `<trkseg>`,
@@ -304,20 +305,73 @@ distinguishes running from driving.
       Advanced settings; don't raise it without trace coverage far denser than a fifth.
 
 **Keyboard shortcuts** live in one list, `SHORTCUTS` in `src/ui/shortcuts.ts`, rendered into both
-the `?` overlay and a section of Advanced settings — a phone has no `?` to press, so the panel is
+the `?` dialog and a subgroup of Advanced settings — a phone has no `?` to press, so the panel is
 the only place the list can be read there. Each letter stands in for a control and does nothing
 when that control is unavailable (`G` only with a course to download, `N` only while editing), so
 the shortcut cannot reach a state the buttons cannot. Ctrl/⌘ Z is the only one that keeps a
 modifier, and it is scoped to editing mode because `exitEditing` drops the history anyway. Enter
 means Find course only where nothing else answers it (`enterIsFree`): on a button, a summary, a
-link or a file input it would steal the panel's own keyboard use. With the overlay up, every key
+link or a file input it would steal the panel's own keyboard use. With a dialog up, every key
 but Esc and `?` is swallowed rather than acting on a course the user cannot see.
 The arrows walk the course strip from anywhere **except over the map**, where Leaflet pans with
 them. They first asked for the focus to be inside the strip, as a tablist conventionally would,
 and so never worked: selecting a course rebuilds the strip, so the click or number key that chose
 one destroyed the very button the arrows wanted focused. They also step over a tab still being
-searched for, since such a tab cannot be shown.
+searched for, since such a tab cannot be shown. `renderCourseTabs` now *reuses* its buttons when
+only their state changed (same reason, plus switching tabs morphs via CSS transitions — a fresh
+element has no old style to transition from).
 
-Panel sections (Offline areas, Advanced settings) are `details.section`: a
-full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as
-fine print and left only the words themselves tappable.
+Panel sections (Offline areas, Advanced settings) are `details.section`, pressed into the panel
+rather than printed on it (Leo's spec 2026-10-20): the summary is a full-width header row in the
+panel's own surface, ruled off edge to edge above and below, with a large chevron; the contents
+sit in a `div.section-body` a step apart in colour behind an inset shadow. The panel itself is
+dark grey, not black — `--panel-bg`/`--section-bg`/`--edge` are `light-dark()` custom properties
+on `:root`. Opening animates via `::details-content` block-size + `interpolate-size:
+allow-keywords`; browsers without it open instantly, styled the same (the `.section-body`
+wrapper exists so the styling never depends on `::details-content` support). Inside, the
+controls sit in onthegomap-style `.subgroup`s — an uppercase grey HEADING sharing its row with
+the dividing line, never collapsible — ordered: main = upload+Find on one row / chart / stats
+/ match-race-section, then Course settings, Via points; Offline areas = Path network, GPS
+traces (short hint in the panel, the full story behind an ⓘ dialog fed from a hidden `<p>` in
+the HTML); Advanced = Search (algorithm…connectors), Your own course (the compare upload lives
+here now), Weights, Editing; then a Documentation section
+of its own (manual button, a colour Legend, Keyboard shortcuts — the last desktop-only via the
+900 px media query, since a phone has no `?` key, which is why the list is in the panel at
+all). Adjacent sections share their dividing line (`+` sibling margin −17px collapses the gap
+to −1 px so the borders overlap). On desktop the panel casts a shadow onto the map. All buttons
+and summaries show a pointer cursor and a hover effect — under `@media (any-hover: hover)`,
+because on a phone the *primary* pointer is the touchscreen and plain `(hover: hover)` is false
+even with a mouse attached; the ⓘ keeps its help cursor. Entering edit mode slides the edit
+bar's buttons in staggered, left to right (CSS `nth-child` delays; showing the bar restarts
+them because `hidden` flips display), and leaving plays the same stagger in reverse
+(`slideOutRow` in `src/ui/animate.ts` — the bar is hidden only after the last button is out).
+The selected course tab is TEMPORARILY coloured per index (raspberry/orange/green/teal), an
+accent audition for Leo — remove once a colour is picked. The accent itself is `--accent` /
+`--accent-deep` on `:root` (so the eventual swap is two lines); subgroup headings and their
+rules use `--accent-muted`, the accent desaturated towards GrayText. The tab strip is 12px
+taller than the published `--tab-strip-h` (42px): transparent padding so the tabs' drop
+shadows are not clipped to a hard edge by the strip's own overflow.
+
+**One modal dialog** (`src/ui/dialog.ts`, built lazily, `openDialog/closeDialog/dialogOpen`)
+serves the `?` shortcut list, every weight's ⓘ explanation (`src/ui/weights.ts`, tooltip on
+desktop, dialog on tap) and the manual (`src/ui/manual.ts`, opened from the Documentation
+subgroup). Each weight is a small number box synced to a slider (0–10 or 0–100); the box
+accepts more and the slider then pegs — `collectWeights` still reads only the boxes, so the
+sliders are pure UI. The untracked row greys out with its checkbox (`reflectUseTraces`).
+
+**Course actions are icon buttons on the map** (`#map-buttons`, right edge under the zoom
+control, 30 px like the zoom buttons, with the same 8 px step to the zoom control as between
+themselves — top 52 px as measured against the real phone, not the computed Leaflet height).
+The buttons sit *below* the sheet's z-index: whatever the sheet covers, it covers. When it is
+pulled to its `tall` stop, a `sheet-tall` class on `body` (set by `initSheet`'s `onLevel`
+callback) slides 🔗 and 🎲/↻ up into a row beside the zoom control, in the strip the sheet
+cannot reach; ✎ (`.map-edit`) stays behind the menu — editing needs the map anyway, and three
+buttons up there crowded the course tabs: ✎ edit (aria-pressed while editing), 🔗 copy link (prompt() fallback — clipboard needs
+a secure context and phone testing runs over plain http), 🎲 try another / ↻ improve. "Try
+another" draws a *random* seed (no seed is better than any other), and the seed field has its
+own 🎲. Search progress prints in `#start-hint`, not the Find button, which now shares a row
+with the GPX chooser and is too small for it. GPX download flips the button to "Saved ✓" for
+2 s because Chrome on Android saves without a word. Cancelling a search drops the unfilled
+spinner tabs. `setStart` centres on the *visible* map: `createMap` takes an `obscured()`
+callback and pans by half the sheet's cover (its top edge on a phone, its right edge on
+desktop).
