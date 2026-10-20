@@ -14,10 +14,6 @@ export interface SessionSettings {
   /** Search effort (beam width), which is a per-machine taste, not per course. */
   beamWidth?: number;
   viaPoints?: { lat: number; lon: number; km: number | null }[];
-  /** Opt-in map overlays; the heatmap URL is personal and stays on the device. */
-  gpsTraces?: boolean;
-  heatmap?: boolean;
-  heatmapUrl?: string;
   seed: number;
 }
 

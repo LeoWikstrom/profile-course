@@ -107,38 +107,6 @@
           <ul id="areas-list" class="hint"></ul>
           <p class="hint" id="storage-info"></p>
         </details>
-        <details id="external-panel" class="section">
-          <summary>Strava &amp; Garmin</summary>
-          <p class="hint">
-            Nothing here is used unless you switch it on. Both services keep your data behind
-            your own login, and this app has no server to log in for you.
-          </p>
-          <label class="control">
-            <span>Import a route or course (GPX from Strava, Garmin Connect, or anything else)</span>
-            <input type="file" id="external-gpx" accept=".gpx" />
-          </label>
-          <p class="hint">
-            Export the route from Strava (⋯ → Export GPX) or the course from Garmin Connect
-            (⚙ → Export to GPX), then load it here: it is map-matched, scored against the race
-            like a generated course, and can be improved and edited.
-          </p>
-          <label class="control checkbox">
-            <input type="checkbox" id="heatmap-toggle" />
-            <span>Show my Strava heatmap over the map</span>
-          </label>
-          <label class="control">
-            <span>Heatmap tile URL (personal, from your own logged-in Strava)</span>
-            <input type="text" id="heatmap-url" inputmode="url" spellcheck="false"
-              placeholder="https://…/{z}/{x}/{y}.png?…" />
-          </label>
-          <p class="hint">
-            Strava's heatmap tiles are signed for one logged-in account, so the URL has to come
-            from your own browser: open strava.com/heatmap, find a tile request in the network
-            tab, and paste its address with the numbers replaced by
-            <code>{z}</code>/<code>{x}</code>/<code>{y}</code>. It is stored on this device only,
-            and it expires — paste a fresh one when the tiles stop appearing.
-          </p>
-        </details>
         <details id="advanced-panel" class="section">
           <summary>Advanced settings</summary>
           <p class="hint">Weights: how much each factor matters (0 = ignore). Note: changing weights changes what the mismatch number means — only compare mismatches produced with the same weights.</p>
@@ -166,11 +134,6 @@
             <input type="checkbox" id="connectors-toggle" />
             <span>Informal street crossings (experimental: lets courses cross residential
               streets anywhere; slower and can reduce course quality)</span>
-          </label>
-          <label class="control checkbox">
-            <input type="checkbox" id="gps-traces" />
-            <span>Show public GPS traces (OpenStreetMap): where people have actually
-              run and ridden, as thin lines over the map</span>
           </label>
           <label class="control checkbox">
             <input type="checkbox" id="start-anywhere" />

@@ -262,18 +262,17 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       moves the chart's crosshair too, so a hill can be found from either side. The crosshair a
       map hover puts up is not a scrub — it sets no pick — or letting go over the chart
       afterwards would commit a distance the user never chose while editing.
-- [ ] **Phase 6 – Strava, Garmin, GPS traces** (all opt-in; nothing is fetched until switched on):
-      - [x] Public **GPS traces** from OSM (`gps.tile.openstreetmap.org/lines/{z}/{x}/{y}.png`) as
-        a translucent overlay, under Advanced settings — where people actually run, which the
-        OSM network alone does not say.
-      - [x] A **Strava & Garmin** section: course/route import (both export GPX, so it is the
-        same map-match-and-score path as "compare your own course"), and a personal **Strava
-        heatmap** overlay. Strava's heatmap tiles are CloudFront-signed for one logged-in
-        account, so the URL template has to be pasted from the user's own browser; it lives in
-        the session on that device and expires. Strava's *API* is out of reach: the token
-        exchange needs a client secret, and a client-only app has nowhere to keep one.
-      - [ ] Course import straight from the services (needs the above resolved).
+**Strava, Garmin and public GPS traces were built and then removed** (Leo's call, 2026-10-20).
+A Strava/Garmin section adds nothing: both services export GPX, and loading a downloaded GPX is
+already the main way in. Their APIs cannot close that gap from a client-only app anyway —
+Strava's token exchange needs a client secret with nowhere to keep it, Garmin has no consumer
+API, and the heatmap's tiles are CloudFront-signed per account, so the URL would have to be
+pasted from the user's own browser and re-pasted when it expired. The OSM public trace overlay
+went with it: the traces are every mode of travel, cars included, so "people go here" says
+nothing about whether people *run* here — which also rules out weighting the search by trace
+density, by tile pixels or by the trackpoints API. Do not re-add any of it without a source that
+distinguishes running from driving.
 
-Panel sections (Offline areas, Strava & Garmin, Advanced settings) are `details.section`: a
+Panel sections (Offline areas, Advanced settings) are `details.section`: a
 full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as
 fine print and left only the words themselves tappable.

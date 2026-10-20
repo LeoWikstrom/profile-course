@@ -212,9 +212,6 @@ function persistSession(): void {
       returnToStart: returnToggle.checked,
       startAnywhere: startAnywhereToggle.checked,
       beamWidth: Number(beamWidthInput.value) || 200,
-      gpsTraces: gpsTracesToggle.checked,
-      heatmap: heatmapToggle.checked,
-      heatmapUrl: heatmapUrlInput.value.trim(),
       viaPoints,
       seed,
     },
@@ -1113,10 +1110,6 @@ rangeTo.addEventListener('input', () => {
 });
 
 const compareInput = document.getElementById('compare-input') as HTMLInputElement;
-const externalGpxInput = document.getElementById('external-gpx') as HTMLInputElement;
-const gpsTracesToggle = document.getElementById('gps-traces') as HTMLInputElement;
-const heatmapToggle = document.getElementById('heatmap-toggle') as HTMLInputElement;
-const heatmapUrlInput = document.getElementById('heatmap-url') as HTMLInputElement;
 const viaList = document.getElementById('via-list') as HTMLUListElement;
 const addViaButton = document.getElementById('add-via') as HTMLButtonElement;
 const viaBar = document.getElementById('via-bar') as HTMLDivElement;
@@ -1298,7 +1291,6 @@ async function importCourseGpx(file: File | undefined): Promise<void> {
 }
 
 compareInput.addEventListener('change', () => void importCourseGpx(compareInput.files?.[0]));
-externalGpxInput.addEventListener('change', () => void importCourseGpx(externalGpxInput.files?.[0]));
 
 gpxInput.addEventListener('change', async () => {
   const file = gpxInput.files?.[0];
@@ -1364,45 +1356,6 @@ findButton.addEventListener('click', () => {
 
 beamWidthInput.addEventListener('change', persistSession);
 
-/**
- * Tiles from elsewhere, each switched on by hand: public GPS traces are
- * everyone's, from OSM, while Strava's heatmap tiles are signed for one
- * account and so can only come from the user's own logged-in browser.
- */
-const GPS_TRACES_URL = 'https://gps.tile.openstreetmap.org/lines/{z}/{x}/{y}.png';
-
-function applyOverlays(): void {
-  map.setOverlay(
-    'gps-traces',
-    gpsTracesToggle.checked
-      ? {
-          url: GPS_TRACES_URL,
-          maxNativeZoom: 20,
-          opacity: 0.7,
-          attribution: 'GPS traces &copy; OpenStreetMap contributors',
-        }
-      : null,
-  );
-  const url = heatmapUrlInput.value.trim();
-  const usable = url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
-  map.setOverlay(
-    'heatmap',
-    heatmapToggle.checked && usable
-      ? { url, maxNativeZoom: 16, opacity: 0.7, attribution: 'Heatmap &copy; Strava' }
-      : null,
-  );
-  if (heatmapToggle.checked && !usable) {
-    startHint.textContent = 'Paste a heatmap tile URL with {z}, {x} and {y} in it.';
-  }
-}
-
-for (const el of [gpsTracesToggle, heatmapToggle, heatmapUrlInput]) {
-  el.addEventListener('change', () => {
-    applyOverlays();
-    persistSession();
-  });
-}
-
 coordSet.addEventListener('click', () => {
   const lat = Number(coordLat.value);
   const lon = Number(coordLon.value);
@@ -1424,10 +1377,6 @@ async function boot(): Promise<void> {
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
     if (session.settings.beamWidth) beamWidthInput.value = String(session.settings.beamWidth);
-    gpsTracesToggle.checked = session.settings.gpsTraces ?? false;
-    heatmapToggle.checked = session.settings.heatmap ?? false;
-    heatmapUrlInput.value = session.settings.heatmapUrl ?? '';
-    applyOverlays();
     viaPoints = session.settings.viaPoints ?? [];
     renderVias();
     if (session.profile) setFullProfile(session.profile);
