@@ -1,8 +1,5 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import { bearingDeg } from '../shared/geo';
 import type { CourseSegment, LatLon } from '../shared/messages';
 
@@ -21,13 +18,19 @@ const CYCLE_MS = 2000;
 /** Grab points closer than this along the course are one pass, not two. */
 const PASS_GAP = 8;
 
-// Leaflet's _getIconUrl builds paths from imagePath, bypassing the bundler's
-// hashed asset URLs; removing it makes mergeOptions URLs win.
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)['_getIconUrl'];
-L.Icon.Default.mergeOptions({
-  iconUrl: markerIcon,
-  iconRetinaUrl: markerIcon2x,
-  shadowUrl: markerShadow,
+/** The start pin, in the accent — Leaflet's default marker is blue. */
+const START_PIN = L.divIcon({
+  className: 'start-pin',
+  iconSize: [30, 42],
+  iconAnchor: [15, 41],
+  html:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="42" viewBox="0 0 30 42">' +
+    '<defs><linearGradient id="start-pin-g" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#e06ba6"/><stop offset="1" stop-color="#a62d68"/>' +
+    '</linearGradient></defs>' +
+    '<path d="M15 1C7.3 1 1 7.4 1 15.3 1 26 15 41 15 41S29 26 29 15.3C29 7.4 22.7 1 15 1Z" ' +
+    'fill="url(#start-pin-g)" stroke="#a62d68" stroke-width="1.5"/>' +
+    '<circle cx="15" cy="15.5" r="5.5" fill="#fff"/></svg>',
 });
 
 export interface MapController {
@@ -86,7 +89,11 @@ export interface MapController {
   /** Km labels and running-direction arrows along ~25 m-spaced course points. */
   decorateCourse(points: { lat: number; lon: number }[]): void;
   clearCourse(): void;
-  showCoursePoint(point: LatLon): void;
+  /**
+   * `hover` draws it like the hover readout's point; default is the red pick.
+   * `label`, if given, goes in the same pill the hover readout shows.
+   */
+  showCoursePoint(point: LatLon, look?: 'pick' | 'hover', label?: string): void;
   hideCoursePoint(): void;
   /** A pill above a point on the map, for what the gesture is about to do. */
   showPointLabel(point: LatLon, text: string): void;
@@ -117,7 +124,8 @@ export function createMap(
   // ask Gokartor AB for permission before re-adding.
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
   let marker: L.Marker | null = null;
@@ -134,8 +142,13 @@ export function createMap(
 
   function placeStart(latlng: L.LatLng): void {
     if (!marker) {
-      marker = L.marker(latlng, { draggable: true }).addTo(map);
-      circle = L.circle(latlng, { radius: radiusMeters, color: '#2563eb', weight: 2, fillOpacity: 0.05 }).addTo(map);
+      marker = L.marker(latlng, { draggable: true, icon: START_PIN }).addTo(map);
+      circle = L.circle(latlng, {
+        radius: radiusMeters,
+        color: '#c63d80',
+        weight: 2,
+        fillOpacity: 0.05,
+      }).addTo(map);
       marker.on('move', () => {
         circle?.setLatLng(marker!.getLatLng());
       });
@@ -163,6 +176,8 @@ export function createMap(
 
   let courseLayer: L.LayerGroup | null = null;
   let pointMarker: L.Marker | null = null;
+  let pointMarkerClass = '';
+  let pointPill: L.Tooltip | null = null;
   let pointLabel: L.Tooltip | null = null;
   let viaMarkers: L.Marker[] = [];
   let editMarkers: L.Marker[] = [];
@@ -307,7 +322,8 @@ export function createMap(
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const len2 = dx * dx + dy * dy;
-      const u = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+      const u =
+        len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
       const ex = a.x + u * dx - p.x;
       const ey = a.y + u * dy - p.y;
       const d = ex * ex + ey * ey;
@@ -684,20 +700,46 @@ export function createMap(
       hoverDescribe = null;
       hideHover();
     },
-    showCoursePoint(point) {
+    showCoursePoint(point, look = 'pick', label) {
+      const className = look === 'hover' ? 'hover-point' : 'course-point';
+      if (pointMarker && pointMarkerClass !== className) {
+        pointMarker.remove();
+        pointMarker = null;
+      }
+      pointMarkerClass = className;
       if (!pointMarker) {
         pointMarker = L.marker([point.lat, point.lon], {
           pane: EDIT_PANE,
           interactive: false,
-          icon: L.divIcon({ className: 'course-point', iconSize: [16, 16] }),
+          icon: L.divIcon({ className, iconSize: [16, 16] }),
         }).addTo(map);
       } else {
         pointMarker.setLatLng([point.lat, point.lon]);
       }
+      if (!label) {
+        pointPill?.remove();
+        pointPill = null;
+        return;
+      }
+      if (!pointPill) {
+        pointPill = L.tooltip({
+          permanent: true,
+          direction: 'top',
+          offset: [0, -14],
+          className: 'hover-pill',
+          interactive: false,
+        }).setLatLng([point.lat, point.lon]);
+        pointPill.addTo(map);
+      } else {
+        pointPill.setLatLng([point.lat, point.lon]);
+      }
+      pointPill.setContent(label);
     },
     hideCoursePoint() {
       pointMarker?.remove();
       pointMarker = null;
+      pointPill?.remove();
+      pointPill = null;
     },
     showPointLabel,
     hidePointLabel,

@@ -345,10 +345,23 @@ even with a mouse attached; the ⓘ keeps its help cursor. Entering edit mode sl
 bar's buttons in staggered, left to right (CSS `nth-child` delays; showing the bar restarts
 them because `hidden` flips display), and leaving plays the same stagger in reverse
 (`slideOutRow` in `src/ui/animate.ts` — the bar is hidden only after the last button is out).
-The selected course tab is TEMPORARILY coloured per index (raspberry/orange/green/teal), an
-accent audition for Leo — remove once a colour is picked. The accent itself is `--accent` /
-`--accent-deep` on `:root` (so the eventual swap is two lines); subgroup headings and their
-rules use `--accent-muted`, the accent desaturated towards GrayText. The tab strip is 12px
+The accent is **pink `#c63d80`** (`--accent` / `--accent-deep #a62d68` on `:root`; Leo picked
+pink 2026-10-20 over blue/raspberry/orange/yellow via a live tab audition — nothing on the map
+tiles is pink — then muted it slightly from the `#db2777` that auditioned). It also colours the
+zone circle (`map.ts`), both chart lines that are "the course's own" (`profileChart.ts`:
+race-only line and the found course's line — the race goes grey once a course overlays it),
+native controls via `accent-color` on `:root` (the weight/zone sliders especially), theme-color,
+the manifest, the icon, and the start pin — an inline-SVG divIcon (`START_PIN` in `map.ts`,
+drop-shadow via `.start-pin`); Leaflet's default blue marker pngs and the `_getIconUrl`
+workaround went with it. Surface colours are *not* accent: paved stays blue. Subgroup headings
+use `--accent-muted` — **pinned to a mix of the original `#db2777`**, because Leo wanted the
+headings unchanged when the accent was muted. The dual-slider draws its track once on the
+container (each input's own track is transparent — the upper input's track painted over the
+lower knob). The chart scrub shows the map point in the *hover* look with the hover readout's pill
+(`showCoursePoint(p, 'hover', label)`) and takes both down on release; the red `course-point`
+look is only for an edit's picked origin. The chart's release handler must check `chartPick` itself — `onCommit` always
+exists, so the chart keeps the point on every release and main.ts hides it when no pick was
+armed. The tab strip is 12px
 taller than the published `--tab-strip-h` (42px): transparent padding so the tabs' drop
 shadows are not clipped to a hard edge by the strip's own overflow.
 

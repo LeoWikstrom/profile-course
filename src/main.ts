@@ -12,6 +12,7 @@ import { initSheet } from './ui/sheet';
 import { closeDialog, dialogOpen, openDialog } from './ui/dialog';
 import { manualContent } from './ui/manual';
 import { renderShortcuts, shortcutsContent } from './ui/shortcuts';
+import { guardSlidersAgainstScroll } from './ui/sliderGuard';
 import { initWeightControls } from './ui/weights';
 import SearchWorker from './search/worker?worker';
 
@@ -161,6 +162,7 @@ function showCandidate(index: number): void {
 
 renderShortcuts(document.getElementById('shortcuts-help') as HTMLElement);
 initWeightControls();
+guardSlidersAgainstScroll();
 (document.getElementById('open-manual') as HTMLButtonElement).addEventListener('click', () =>
   openDialog('Manual', manualContent()),
 );
@@ -373,11 +375,21 @@ function showResult(
         return;
       }
       lastChartKm = (i * SAMPLE_STEP_M) / 1000;
-      map.showCoursePoint(points[indexAtM(cum, lastChartKm * 1000)]!);
+      const m = lastChartKm * 1000;
+      map.showCoursePoint(
+        points[indexAtM(cum, m)]!,
+        'hover',
+        hoverReadout(points, cum, atM(cum, m)),
+      );
     },
     // While editing, letting go of the chart picks that distance to edit at —
     // the only way to say which pass of a stretch the course covers twice.
-    (i) => chartPick?.((i * SAMPLE_STEP_M) / 1000),
+    // The chart keeps the point up on every release because this callback
+    // always exists, so outside editing the point is taken down here.
+    (i) => {
+      if (chartPick) chartPick((i * SAMPLE_STEP_M) / 1000);
+      else map.hideCoursePoint();
+    },
   );
   // Each hover answers the other: the chart already marks the map, and the map
   // now marks the chart, so a hill under the cursor can be found either way.
@@ -489,6 +501,14 @@ function indexAtM(cum: number[], m: number): number {
   let i = 0;
   while (i + 1 < cum.length && cum[i + 1]! <= m) i++;
   return i;
+}
+
+/** Fractional point index at a distance along the course — metresAt inverted. */
+function atM(cum: number[], m: number): number {
+  const i = indexAtM(cum, m);
+  const j = Math.min(i + 1, cum.length - 1);
+  const span = cum[j]! - cum[i]!;
+  return span > 0 ? i + Math.min(1, Math.max(0, (m - cum[i]!) / span)) : i;
 }
 
 /** Distance along the course at a fractional point index. */

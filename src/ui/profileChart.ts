@@ -2,6 +2,9 @@ import { SAMPLE_STEP_M } from '../gpx/profile';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** The found course draws in the accent; the race it chases in grey. */
+const COURSE_COLOR = '#c63d80';
+
 /** Drives the crosshair from outside, for a cursor that is over the map. */
 export interface ChartHandle {
   showSample(sampleIndex: number): void;
@@ -51,11 +54,11 @@ export function renderInteractiveChart(
   const x = (i: number) => pad + ((i * SAMPLE_STEP_M) / maxDist) * (width - 2 * pad);
   const y = (v: number) => height - pad - ((v - min) / (max - min)) * (height - pad - padTop);
 
-  const RACE_ONLY_COLOR = '#2563eb';
+  const RACE_ONLY_COLOR = '#c63d80';
   for (const { samples, color } of course
     ? [
         { samples: target, color: '#9ca3af' },
-        { samples: course, color: '#dc2626' },
+        { samples: course, color: COURSE_COLOR },
       ]
     : [{ samples: target, color: RACE_ONLY_COLOR }]) {
     const pts: string[] = [];
@@ -76,7 +79,6 @@ export function renderInteractiveChart(
   crosshair.setAttribute('visibility', 'hidden');
   svg.appendChild(crosshair);
 
-  const COURSE_COLOR = '#dc2626';
   const TARGET_COLOR = '#9ca3af';
 
   function makeDot(fill: string): SVGCircleElement {
@@ -110,7 +112,9 @@ export function renderInteractiveChart(
     return ((samples[i1]! - samples[i0]!) / ((i1 - i0) * SAMPLE_STEP_M)) * 100;
   }
 
-  const shown = course ? [crosshair, dot, text, targetDot, targetText] : [crosshair, targetDot, targetText];
+  const shown = course
+    ? [crosshair, dot, text, targetDot, targetText]
+    : [crosshair, targetDot, targetText];
 
   /** The sample under the finger, for `onCommit` to take on release. */
   let at: number | null = null;

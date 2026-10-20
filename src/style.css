@@ -11,11 +11,16 @@
   --panel-bg: light-dark(#ffffff, #26282c);
   --section-bg: light-dark(#f2f3f5, #2f3237);
   --edge: light-dark(rgb(0 0 0 / 0.16), rgb(255 255 255 / 0.14));
-  /* The accent, in one place — still under audition (see the tab colours). */
-  --accent: #2563eb;
-  --accent-deep: #1d4ed8;
-  /* Desaturated accent: subgroup headings and their rules. */
-  --accent-muted: color-mix(in srgb, var(--accent) 45%, GrayText);
+  /* The accent, in one place — pink, picked over blue/orange/yellow (Leo,
+     2026-10-20): nothing on the map tiles is pink, so it pops everywhere.
+     Slightly muted from the #db2777 the tabs auditioned. */
+  --accent: #c63d80;
+  --accent-deep: #a62d68;
+  /* Desaturated accent for subgroup headings and their rules — mixed from the
+     original pink, pinned so muting the accent did not shift the headings. */
+  --accent-muted: color-mix(in srgb, #db2777 45%, GrayText);
+  /* Native controls — the weight and zone sliders especially — follow suit. */
+  accent-color: var(--accent);
 }
 
 html,
@@ -102,6 +107,9 @@ h1 {
 input[type='range'] {
   width: 100%;
   min-height: 44px;
+  /* A vertical swipe over a slider scrolls the sheet; only a horizontal drag
+     adjusts the value — so scrolling cannot knock the sliders about. */
+  touch-action: pan-y;
 }
 
 .hint {
@@ -566,29 +574,6 @@ button:not(:disabled) {
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.4);
 }
 
-/* TEMPORARY accent audition (Leo, 2026-10-20): each tab wears one of the four
-   candidate accents — raspberry, trail orange, forest green, teal — so they
-   can be judged live over real map tiles. Remove once one is picked. */
-#course-tabs > button:nth-child(1)[aria-selected='true'] {
-  background: #e11d48;
-  border-color: #be123c;
-}
-
-#course-tabs > button:nth-child(2)[aria-selected='true'] {
-  background: #f97316;
-  border-color: #ea580c;
-}
-
-#course-tabs > button:nth-child(3)[aria-selected='true'] {
-  background: #059669;
-  border-color: #047857;
-}
-
-#course-tabs > button:nth-child(4)[aria-selected='true'] {
-  background: #0d9488;
-  border-color: #0f766e;
-}
-
 #course-tabs > button:disabled {
   color: GrayText;
 }
@@ -685,10 +670,23 @@ progress {
   margin-top: 6px;
 }
 
-/* Two stacked native range inputs acting as one dual-handle slider. */
+/* Two stacked native range inputs acting as one dual-handle slider. The track
+   is drawn once, on the container — each input's own track is transparent,
+   because the upper input's track painted over the lower input's knob. */
 .dual-slider {
   position: relative;
   height: 44px;
+}
+
+.dual-slider::before {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, GrayText 40%, transparent);
 }
 
 .dual-slider > input[type='range'] {
@@ -702,16 +700,18 @@ progress {
   appearance: none;
 }
 
+/* No margin-top: the old 20px positioned the *visible* track, but now the
+   container's ::before is the visible track — the input's own track must sit
+   at its natural centred spot, where the knobs ride. */
 .dual-slider > input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
-  margin-top: 20px;
-  background: color-mix(in srgb, GrayText 40%, transparent);
+  background: transparent;
   border-radius: 2px;
 }
 
 .dual-slider > input[type='range']::-moz-range-track {
   height: 4px;
-  background: color-mix(in srgb, GrayText 40%, transparent);
+  background: transparent;
   border-radius: 2px;
 }
 
@@ -736,6 +736,11 @@ progress {
   background: var(--accent);
   border: 2px solid #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
+/* The start pin casts the soft shadow the old marker png carried with it. */
+.start-pin {
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.4));
 }
 
 .via-marker {
