@@ -76,12 +76,28 @@ export interface AreaInfo {
   nodes: number;
 }
 
+/** A stored GPS-trace download; `kept` of `points` were at a running pace. */
+export interface TraceInfo {
+  id: string;
+  lat: number;
+  lon: number;
+  radiusMeters: number;
+  savedAt: number;
+  points: number;
+  timed: number;
+  kept: number;
+  cells: number;
+}
+
 export type MainToWorker =
   | { type: 'ping' }
   | { type: 'elevate'; lats: Float64Array; lons: Float64Array }
   | { type: 'downloadArea'; center: LatLon; radiusMeters: number }
   | { type: 'listAreas' }
   | { type: 'deleteArea'; id: string }
+  | { type: 'downloadTraces'; center: LatLon; radiusMeters: number }
+  | { type: 'listTraces' }
+  | { type: 'deleteTraces'; id: string }
   | {
       type: 'search';
       start: LatLon;
@@ -175,6 +191,7 @@ export type WorkerToMain =
       startElevation: number;
     }
   | { type: 'areas'; areas: AreaInfo[] }
+  | { type: 'traces'; traces: TraceInfo[] }
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
   | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
   /**

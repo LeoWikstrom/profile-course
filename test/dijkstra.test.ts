@@ -28,6 +28,7 @@ function makeGraph(): Graph {
     signals: 0,
     cellIds: null,
     cellHead: null,
+    traced: 1,
     turnOffsets: new Float64Array(0),
     headOutA: Number.NaN,
     headInB: Number.NaN,

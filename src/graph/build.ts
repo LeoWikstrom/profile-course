@@ -2,6 +2,7 @@ import { bearingDeg, haversineMeters, turnPositions } from '../shared/geo';
 import { SAMPLE_STEP_M } from '../gpx/profile';
 import type { OverpassResponse, OverpassWay } from '../net/overpass';
 import type { TerrainSampler } from '../net/terrain';
+import { cellIdAt } from './cells';
 import {
   otherNode,
   SURFACE_GRAVEL,
@@ -386,6 +387,7 @@ export function buildGraph(
         signals,
         cellIds: null,
         cellHead: null,
+        traced: 1,
         eleTag: Number.isFinite(ele) ? ele : null,
         a,
         b,
@@ -693,7 +695,7 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
     for (let k = 0; k < count; k++) {
       const la = lats[offset + k]!;
       const lo = lons[offset + k]!;
-      cellIds[k] = Math.round((la * 111320) / 14) * 1_000_003 + Math.round((lo * 58000) / 14);
+      cellIds[k] = cellIdAt(la, lo);
       const k2 = Math.min(k + 1, count - 1);
       const k1 = k2 === k ? k - 1 : k;
       cellHead[k] = bearingDeg(lats[offset + k1]!, lons[offset + k1]!, lats[offset + k2]!, lons[offset + k2]!);

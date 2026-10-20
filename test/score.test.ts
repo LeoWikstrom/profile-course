@@ -33,6 +33,7 @@ function courseFrom(samples: Float32Array, reachRatio = 0.5): AssembledCourse {
     penaltyFraction: 0,
     repeatFraction: 0,
     oscillationFraction: 0,
+    untrackedFraction: 0,
     reachM: (samples.length - 1) * 25 * reachRatio,
     turnsPerKm: 0,
     denseTurnsPerKm: 0,

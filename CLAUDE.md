@@ -269,9 +269,31 @@ Strava's token exchange needs a client secret with nowhere to keep it, Garmin ha
 API, and the heatmap's tiles are CloudFront-signed per account, so the URL would have to be
 pasted from the user's own browser and re-pasted when it expired. The OSM public trace overlay
 went with it: the traces are every mode of travel, cars included, so "people go here" says
-nothing about whether people *run* here — which also rules out weighting the search by trace
-density, by tile pixels or by the trackpoints API. Do not re-add any of it without a source that
+nothing about whether people *run* here. Do not re-add any of it without a source that
 distinguishes running from driving.
+
+- [x] **Where people actually run** (the one part of that kept, on Leo's call 2026-10-20): the
+      **raw trackpoints API** under its own advanced sub-heading inside Offline areas, with an
+      unticked-by-default checkbox in Advanced settings and a note that it takes a long time.
+      What makes it answer the objection above is the **pace filter**: within a `<trkseg>`,
+      consecutive points 1.5–5.5 m/s apart (3–11 min/km, ≤ 60 s between them) are kept and the
+      rest dropped, so cars and walkers go. Untimed points go too — public-visibility traces come
+      back stripped of their clock *and* their order, so there is no telling a run from a commute
+      in them. On a real Gothenburg box that leaves 1 400 of 5 000 points.
+      `api.openstreetmap.org/api/0.6/trackpoints?bbox=…&page=N` hands out 5 000 points a page,
+      so the circle is tiled into ~2 km boxes (also under the 0.25 deg² bbox cap) and each is
+      paged until a short page, strictly sequentially — we are a guest on that API. Hence the
+      warning in the UI; the search's Cancel stops it, and then nothing is saved.
+      The kept points become counts per **~14 m cell, the same grid the corridor/repeat detector
+      uses** — `cellIdAt` in `src/graph/cells.ts` is now the single packing both share, `| 0`
+      included, because the edges hold their cells in an Int32Array and the product overflows:
+      a producer that did not wrap identically would never match an edge's cell. The grid is
+      dilated by one cell when applied, since a consumer GPS lands beside the path as often as
+      on it. Every graph gets `edge.traced` attached after the elevation pass (coverage is free
+      to carry; it is the weight that the checkbox turns on, and `untracked` defaults to 0), and
+      the beam ranks on it as well, since the final score only reorders what the beam survived.
+      **Ground no download covers reads as unrun on purpose**: if it were free instead, the
+      search would be pulled straight out of the area that was downloaded.
 
 Panel sections (Offline areas, Advanced settings) are `details.section`: a
 full-width 44 px row with a chevron, not the small grey hint text they used to be, which read as

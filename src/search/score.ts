@@ -43,6 +43,13 @@ export interface Weights {
    * bumps and one 4 % climb are the same distribution.
    */
   localShape: number;
+  /**
+   * Per unit of the course no public GPS trace has been run along (see
+   * `applyTraceCoverage`). 0 unless the user asks for it: it is only as good
+   * as the traces that have been downloaded, and ground nobody uploaded is
+   * indistinguishable from ground nobody runs.
+   */
+  untracked: number;
 }
 
 // Local similarity (rmse, localShape) outweighs the global gain/loss match —
@@ -63,6 +70,7 @@ export const DEFAULT_WEIGHTS: Weights = {
   denseTurns: 2,
   trafficLights: 0,
   localShape: 9,
+  untracked: 0,
 };
 
 export const OSCILLATION_WINDOW_M = 1000;
@@ -123,6 +131,8 @@ export interface AssembledCourse {
   penaltyFraction: number;
   repeatFraction: number;
   oscillationFraction: number;
+  /** Share of the course no downloaded GPS trace has been run along, 0..1. */
+  untrackedFraction: number;
   /** The farthest the course gets from its start, in metres. */
   reachM: number;
   turnsPerKm: number;
@@ -144,6 +154,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
   let penaltyLen = 0;
   let repeatLen = 0;
   let oscillationLen = 0;
+  let untracedLen = 0;
 
   const firstEdge = graph.edges[path.edges[0] ?? 0];
   const root = firstEdge ? (path.dirs[0] === 1 ? firstEdge.a : firstEdge.b) : 0;
@@ -192,6 +203,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
 
     surfaceLen[e.surface] += e.lengthM;
     penaltyLen += e.penalty * e.lengthM;
+    untracedLen += (1 - e.traced) * e.lengthM;
     signalCount += e.signals;
 
     const far = forward ? e.b : e.a;
@@ -262,6 +274,7 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
     penaltyFraction: lengthM > 0 ? penaltyLen / lengthM : 0,
     repeatFraction: lengthM > 0 ? repeatLen / lengthM : 0,
     oscillationFraction: lengthM > 0 ? oscillationLen / lengthM : 0,
+    untrackedFraction: lengthM > 0 ? untracedLen / lengthM : 0,
     reachM: Math.sqrt(reachSq),
     turnsPerKm: turnDists.length / km,
     denseTurnsPerKm: denseTurns / km,
@@ -407,6 +420,7 @@ export function scoreBreakdown(
     'dense turns': weights.denseTurns * course.denseTurnsPerKm,
     'traffic lights': weights.trafficLights * course.signalsPerKm,
     'local shape': weights.localShape * windowShapeError(course.samples, target.samples),
+    'unrun ground': weights.untracked * course.untrackedFraction,
   };
 }
 

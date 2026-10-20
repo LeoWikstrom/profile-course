@@ -11,6 +11,8 @@ export interface SessionSettings {
   surface: string;
   returnToStart: boolean;
   startAnywhere?: boolean;
+  /** Weight the search towards paths public GPS traces have been run along. */
+  useTraces?: boolean;
   /** Search effort (beam width), which is a per-machine taste, not per course. */
   beamWidth?: number;
   viaPoints?: { lat: number; lon: number; km: number | null }[];

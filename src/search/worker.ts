@@ -8,6 +8,9 @@ import {
 } from '../graph/build';
 import { otherNode, type Graph } from '../graph/types';
 import { deleteArea, listAreas, saveArea } from '../net/areaStore';
+import { deleteTraces, listTraces, loadTraceCounts, saveTraces } from '../net/traceStore';
+import { fetchTracePoints } from '../net/traces';
+import { applyTraceCoverage } from '../graph/traces';
 import { fetchNetwork, getNetwork } from '../net/overpass';
 import { TerrainSampler } from '../net/terrain';
 import { haversineMeters } from '../shared/geo';
@@ -89,6 +92,31 @@ async function downloadArea(center: LatLon, radiusMeters: number): Promise<void>
   post({ type: 'areas', areas: await listAreas() });
 }
 
+async function downloadTraces(center: LatLon, radiusMeters: number): Promise<void> {
+  cancelled = false;
+  post({ type: 'progress', stage: 'GPS traces: 0 %', fraction: 0.01, bestScore: null });
+  const found = await fetchTracePoints(center, radiusMeters, {
+    shouldCancel: () => cancelled,
+    onProgress: (done, total, kept) => {
+      const pct = Math.round((done / total) * 100);
+      post({
+        type: 'progress',
+        stage: `GPS traces: ${pct} % (${kept.toLocaleString()} run points)`,
+        fraction: Math.min(0.97, done / total),
+        bestScore: null,
+      });
+    },
+  });
+  if (cancelled && found.kept === 0) {
+    post({ type: 'traces', traces: await listTraces() });
+    return;
+  }
+  await saveTraces(center, radiusMeters, found);
+  // Whatever graph is in hand was built without this coverage.
+  preparedKey = '';
+  post({ type: 'traces', traces: await listTraces() });
+}
+
 let graph: Graph | null = null;
 let startNode = -1;
 let validEnd: Uint8Array | null = null;
@@ -164,6 +192,11 @@ async function ensurePrepared(
 
   post({ type: 'progress', stage: 'sampling elevation', fraction: 0.25, bestScore: null });
   await sampleEdgeElevations(graph, sampler);
+  // Coverage rides along with every graph whether or not the user has asked
+  // for it; what the checkbox turns on is the weight, which costs nothing when
+  // it is zero. The cells are only known after the elevation pass, which is
+  // what fills them in.
+  applyTraceCoverage(graph, await loadTraceCounts());
   preparedKey = key;
   preparedArgs = {
     start,
@@ -812,6 +845,25 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
     case 'deleteArea':
       deleteArea(msg.id)
         .then((areas) => post({ type: 'areas', areas }))
+        .catch((err: unknown) => post({ type: 'error', message: String(err) }));
+      break;
+    case 'downloadTraces':
+      downloadTraces(msg.center, msg.radiusMeters).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      );
+      break;
+    case 'listTraces':
+      listTraces()
+        .then((traces) => post({ type: 'traces', traces }))
+        .catch((err: unknown) => post({ type: 'error', message: String(err) }));
+      break;
+    case 'deleteTraces':
+      deleteTraces(msg.id)
+        .then((traces) => {
+          // The graph in hand still carries the coverage this download gave it.
+          preparedKey = '';
+          post({ type: 'traces', traces });
+        })
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'matchCourse':

@@ -66,6 +66,8 @@ interface StateStore {
   gain: number[];
   loss: number[];
   penaltyLen: number[];
+  /** Metres run along ground no downloaded GPS trace covers (see `traced`). */
+  untracedLen: number[];
   repeatLen: number[];
   /** Farthest the path has been from its own root, metres (see confinement). */
   reach: number[];
@@ -200,6 +202,7 @@ function partialRank(s: StateStore, i: number, weights: Weights, tp: TargetPrefi
     weights.rmse * rmse +
     weights.gainLoss * gainLossErr +
     weights.penalty * (s.penaltyLen[i]! / d) +
+    weights.untracked * (s.untracedLen[i]! / d) +
     // repeatLen is reuse inside the oscillation window (see recentReuse). Use
     // a fraction of the final weight: at full strength the term dominates the
     // partial rank in dense/small graphs and starves the beam of diversity.
@@ -332,6 +335,7 @@ export async function beamSearch(
     gain: roots.map(() => 0),
     loss: roots.map(() => 0),
     penaltyLen: roots.map(() => 0),
+    untracedLen: roots.map(() => 0),
     repeatLen: roots.map(() => 0),
     reach: roots.map(() => 0),
     root: [...roots],
@@ -532,6 +536,7 @@ export async function beamSearch(
         s.loss.push(loss);
         const avoided = avoidEdges?.has(ei) ? AVOID_PENALTY : 0;
         s.penaltyLen.push(s.penaltyLen[si]! + (e.penalty + avoided) * e.lengthM);
+        s.untracedLen.push(s.untracedLen[si]! + (1 - e.traced) * e.lengthM);
         s.repeatLen.push(s.repeatLen[si]! + repeat);
         const rootIdx = s.root[si]!;
         const dy = (graph.nodeLat[nextNode]! - graph.nodeLat[rootIdx]!) * 111_320;

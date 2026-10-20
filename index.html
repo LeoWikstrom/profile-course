@@ -106,6 +106,21 @@
           <progress id="area-progress" max="1" value="0" hidden></progress>
           <ul id="areas-list" class="hint"></ul>
           <p class="hint" id="storage-info"></p>
+          <details id="traces-panel" class="subsection">
+            <summary>Advanced: where people actually run</summary>
+            <p class="hint">
+              Downloads the public GPS traces people have uploaded to OpenStreetMap around the
+              start marker, keeping only the points recorded at a running pace (3–11 min/km), so
+              the search can favour paths that are really run rather than merely mapped. Only
+              traces uploaded with their timestamps can be told apart from a drive or a bike
+              ride, so most of what arrives is discarded — and <strong>this takes a long
+              time</strong>: the API hands out 5 000 points at a time, one ~2 km box after
+              another. Minutes for a small radius, far longer for a big one. Cancel stops it, and
+              then nothing is saved. Uses the same area radius as above.
+            </p>
+            <button id="download-traces" disabled>Download GPS traces around start</button>
+            <ul id="traces-list" class="hint"></ul>
+          </details>
         </details>
         <details id="advanced-panel" class="section">
           <summary>Advanced settings</summary>
@@ -134,6 +149,11 @@
             <input type="checkbox" id="connectors-toggle" />
             <span>Informal street crossings (experimental: lets courses cross residential
               streets anywhere; slower and can reduce course quality)</span>
+          </label>
+          <label class="control checkbox">
+            <input type="checkbox" id="use-traces" />
+            <span>Prefer paths people actually run (uses the downloaded GPS traces; ground no
+              trace covers, including anywhere outside a download, counts as unrun)</span>
           </label>
           <label class="control checkbox">
             <input type="checkbox" id="start-anywhere" />

@@ -63,8 +63,16 @@ const WEIGHT_FIELDS = [
   'trafficLights',
 ];
 
+/**
+ * What a course nobody has been seen running costs when the option is on —
+ * about as off-putting as the wrong surface underfoot, so it steers between
+ * otherwise similar ways without outbidding the elevation terms.
+ */
+const UNTRACKED_WEIGHT = 20;
+
 function collectWeights(): Record<string, number> | null {
   const out: Record<string, number> = {};
+  out['untracked'] = useTraces.checked ? UNTRACKED_WEIGHT : 0;
   for (const f of WEIGHT_FIELDS) {
     const el = document.getElementById(`w-${f}`) as HTMLInputElement;
     const v = Number(el.value);
@@ -93,6 +101,9 @@ const areaRadius = document.getElementById('area-radius') as HTMLSelectElement;
 const downloadAreaButton = document.getElementById('download-area') as HTMLButtonElement;
 const areaProgress = document.getElementById('area-progress') as HTMLProgressElement;
 const areasList = document.getElementById('areas-list') as HTMLUListElement;
+const downloadTracesButton = document.getElementById('download-traces') as HTMLButtonElement;
+const tracesList = document.getElementById('traces-list') as HTMLUListElement;
+const useTraces = document.getElementById('use-traces') as HTMLInputElement;
 const rangeLabel = document.getElementById('range-label') as HTMLOutputElement;
 const beamWidthInput = document.getElementById('beam-width') as HTMLInputElement;
 
@@ -211,6 +222,7 @@ function persistSession(): void {
       surface: surfaceSelect.value,
       returnToStart: returnToggle.checked,
       startAnywhere: startAnywhereToggle.checked,
+      useTraces: useTraces.checked,
       beamWidth: Number(beamWidthInput.value) || 200,
       viaPoints,
       seed,
@@ -880,7 +892,8 @@ function searchDone(): void {
 
 cancelButton.addEventListener('click', () => {
   send({ type: 'cancel' });
-  startHint.textContent = 'Search cancelled.';
+  startHint.textContent = downloadingTraces ? 'Trace download cancelled.' : 'Search cancelled.';
+  if (downloadingTraces) downloadTracesButton.textContent = 'Stopping…';
   searchDone();
 });
 
@@ -900,6 +913,39 @@ function renderAreas(areas: import('./shared/messages').AreaInfo[]): void {
   }
 }
 
+function renderTraces(traces: import('./shared/messages').TraceInfo[]): void {
+  tracesList.textContent = '';
+  for (const t of traces) {
+    const li = document.createElement('li');
+    const date = new Date(t.savedAt).toISOString().slice(0, 10);
+    li.textContent =
+      `${(t.radiusMeters / 1000).toFixed(0)} km @ ${t.lat.toFixed(3)}, ${t.lon.toFixed(3)}: ` +
+      `${t.kept.toLocaleString()} run points of ${t.points.toLocaleString()} (${date}) `;
+    const del = document.createElement('button');
+    del.textContent = 'Remove';
+    del.style.width = 'auto';
+    del.style.minHeight = '28px';
+    del.addEventListener('click', () => send({ type: 'deleteTraces', id: t.id }));
+    li.appendChild(del);
+    tracesList.appendChild(li);
+  }
+  if (traces.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'Nothing downloaded yet.';
+    tracesList.appendChild(li);
+  }
+}
+
+/** Set while a trace download is out, so its arrival can tick the checkbox. */
+let downloadingTraces = false;
+
+function tracesDone(): void {
+  downloadingTraces = false;
+  downloadTracesButton.textContent = 'Download GPS traces around start';
+  downloadTracesButton.disabled = map.getStart() === null;
+  cancelButton.hidden = !searching;
+}
+
 worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   const msg = event.data;
   switch (msg.type) {
@@ -912,6 +958,17 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       downloadAreaButton.disabled = map.getStart() === null;
       areaProgress.hidden = true;
       break;
+    case 'traces': {
+      renderTraces(msg.traces);
+      // Downloading them is asking for them: the checkbox is only unticked by
+      // default because there is nothing to use until one has been done.
+      if (downloadingTraces && msg.traces.length > 0) {
+        useTraces.checked = true;
+        persistSession();
+      }
+      tracesDone();
+      break;
+    }
     case 'elevated': {
       if (!pendingGpx) break;
       const points = pendingGpx.points.map((p, i) => ({ ...p, ele: msg.elevations[i]! }));
@@ -927,6 +984,12 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       );
       break;
     case 'progress':
+      if (msg.stage.startsWith('GPS traces')) {
+        downloadTracesButton.textContent = msg.stage;
+        areaProgress.hidden = false;
+        areaProgress.value = msg.fraction;
+        break;
+      }
       if (msg.stage.startsWith('downloading area')) {
         downloadAreaButton.textContent = msg.stage;
         areaProgress.hidden = false;
@@ -1025,11 +1088,13 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       downloadAreaButton.disabled = map.getStart() === null;
       areaProgress.hidden = true;
       searchDone();
+      tracesDone();
       break;
   }
 };
 send({ type: 'ping' });
 send({ type: 'listAreas' });
+send({ type: 'listTraces' });
 
 downloadAreaButton.addEventListener('click', () => {
   const start = map.getStart();
@@ -1038,6 +1103,20 @@ downloadAreaButton.addEventListener('click', () => {
   downloadAreaButton.textContent = 'Downloading…';
   send({ type: 'downloadArea', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
 });
+
+downloadTracesButton.addEventListener('click', () => {
+  const start = map.getStart();
+  if (!start) return;
+  downloadingTraces = true;
+  downloadTracesButton.disabled = true;
+  downloadTracesButton.textContent = 'GPS traces: 0 %';
+  // The search's Cancel stops this too — it is the same worker-side flag, and
+  // a download measured in minutes needs a way out.
+  cancelButton.hidden = false;
+  send({ type: 'downloadTraces', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
+});
+
+useTraces.addEventListener('change', persistSession);
 
 function setFullProfile(profile: TargetProfile): void {
   fullProfile = profile;
@@ -1328,6 +1407,7 @@ map.onStartChange((start) => {
   coordLat.value = start.lat.toFixed(5);
   coordLon.value = start.lon.toFixed(5);
   downloadAreaButton.disabled = false;
+  if (!downloadingTraces) downloadTracesButton.disabled = false;
   updateFindEnabled();
   persistSession();
 });
@@ -1376,6 +1456,7 @@ async function boot(): Promise<void> {
     if (session.settings.surface) surfaceSelect.value = session.settings.surface;
     returnToggle.checked = session.settings.returnToStart;
     startAnywhereToggle.checked = session.settings.startAnywhere ?? false;
+    useTraces.checked = session.settings.useTraces ?? false;
     if (session.settings.beamWidth) beamWidthInput.value = String(session.settings.beamWidth);
     viaPoints = session.settings.viaPoints ?? [];
     renderVias();

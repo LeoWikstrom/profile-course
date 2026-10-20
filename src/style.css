@@ -168,6 +168,41 @@ details.section[open] > summary::after {
   margin-bottom: 14px;
 }
 
+/* A section inside a section: the same tappable row, indented and quieter. */
+details.subsection > summary {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  margin: 10px 0 10px 10px;
+  border: 1px dashed GrayText;
+  border-radius: 8px;
+  color: CanvasText;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+details.subsection > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.subsection > summary::after {
+  content: '\25b8';
+  margin-left: auto;
+  color: GrayText;
+  transition: transform 0.15s ease;
+}
+
+details.subsection[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+details.subsection > *:not(summary) {
+  margin-left: 10px;
+}
+
 button {
   width: 100%;
   min-height: 44px;

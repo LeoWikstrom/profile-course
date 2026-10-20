@@ -34,6 +34,12 @@ export interface GraphEdge {
    */
   cellIds: Int32Array | null;
   cellHead: Float32Array | null;
+  /**
+   * Fraction of this edge seen in public GPS traces at a running pace, 0..1.
+   * 1 when no traces have been downloaded, so the term costs nothing until
+   * there is something to say.
+   */
+  traced: number;
   /** Heading when entering at a / leaving at b, degrees; NaN for degenerate geometry. */
   headOutA: number;
   headInB: number;
