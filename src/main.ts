@@ -1545,7 +1545,7 @@ function renderVias(): void {
         b.textContent = glyph;
         b.style.width = 'auto';
         b.style.minHeight = '28px';
-        b.style.padding = '0 18px';
+        b.style.padding = '0 12px';
         b.title = label;
         b.setAttribute('aria-label', label);
         b.disabled = i + delta < 0 || i + delta >= viaPoints.length;

@@ -1065,7 +1065,7 @@ dl.shortcuts kbd {
   #sheet {
     top: 0;
     right: auto;
-    width: 380px;
+    width: 410px;
     max-height: none;
     border-radius: 0;
     /* A fixed left panel casts to the right, onto the map. */
@@ -1084,7 +1084,7 @@ dl.shortcuts kbd {
   #edit-bar,
   #via-bar,
   #edit-status {
-    left: 388px;
+    left: 418px;
   }
   #shortcuts-subgroup {
     display: block;
