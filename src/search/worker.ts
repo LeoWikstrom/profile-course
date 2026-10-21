@@ -52,6 +52,15 @@ function post(msg: WorkerToMain): void {
   postMessage(msg);
 }
 
+/** The thrown message plus its top stack frame — a bare "cannot read X of
+ * undefined" from a phone is undebuggable without knowing where. */
+function errText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  console.error(err);
+  const frame = err.stack?.split('\n').find((l) => l.includes('.ts'));
+  return frame ? `${err.message} (${frame.trim()})` : err.message;
+}
+
 const sampler = new TerrainSampler();
 
 function bytesProgress(stage: string, fraction: number): (bytes: number, endpoint: number) => void {
@@ -927,13 +936,11 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
           viaToleranceKm: msg.viaToleranceKm,
         },
         msg.generation,
-      ).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
-      );
+      ).catch((err: unknown) => post({ type: 'error', message: errText(err) }));
       break;
     case 'downloadArea':
       downloadArea(msg.center, msg.radiusMeters).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+        post({ type: 'error', message: errText(err) }),
       );
       break;
     case 'listAreas':
@@ -948,7 +955,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       break;
     case 'downloadTraces':
       downloadTraces(msg.center, msg.radiusMeters).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+        post({ type: 'error', message: errText(err) }),
       );
       break;
     case 'listTraces':
@@ -967,8 +974,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
       break;
     case 'matchCourse':
       matchCourse(msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
-        (err: unknown) =>
-          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+        (err: unknown) => post({ type: 'error', message: errText(err) }),
       );
       break;
     case 'editCourse':
@@ -983,9 +989,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.weights,
         msg.viaPoints ?? [],
         msg.rerouteWindowM ?? DEFAULT_WINDOW_M,
-      ).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
-      );
+      ).catch((err: unknown) => post({ type: 'error', message: errText(err) }));
       break;
     case 'nodeEdit':
       nodeEdit(
@@ -1000,14 +1004,11 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         msg.desiredMix,
         msg.weights,
         msg.viaPoints ?? [],
-      ).catch((err: unknown) =>
-        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
-      );
+      ).catch((err: unknown) => post({ type: 'error', message: errText(err) }));
       break;
     case 'improveCourse':
       improveMatched(msg.path, msg.lats, msg.lons, msg.target, msg.desiredMix, msg.weights).catch(
-        (err: unknown) =>
-          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+        (err: unknown) => post({ type: 'error', message: errText(err) }),
       );
       break;
     case 'cancel':

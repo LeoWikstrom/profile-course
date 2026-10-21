@@ -115,6 +115,25 @@ describe('TerrainSampler retry on fetch failure', () => {
     const tilesMap = (sampler as any).tiles as Map<string, Float32Array>;
     expect(tilesMap.size).toBeLessThanOrEqual(64);
   });
+
+  it('samples a batch spanning more tiles than the LRU cap', async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    })) as unknown as typeof fetch;
+
+    const sampler = new TerrainSampler(7, mockFetch);
+    // 70 points in 70 distinct tiles — a big offline-area graph does this.
+    // The batch's own later prefetches must not evict the tiles it is about
+    // to sample (that read a `.get(key)!` of undefined before).
+    const n = 70;
+    const lats = new Float64Array(n);
+    const lons = new Float64Array(n);
+    for (let i = 0; i < n; i++) lons[i] = -100 + i * 2.9;
+    const out = await sampler.elevations(lats, lons);
+    expect(out.length).toBe(n);
+    for (const v of out) expect(Number.isFinite(v)).toBe(true);
+  });
 });
 
 describe('real Skatås terrain tile', () => {

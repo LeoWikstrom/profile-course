@@ -142,7 +142,15 @@ export class TerrainSampler {
       const ty = Math.floor(latToTileY(lats[i]!, this.zoom));
       needed.set(`${this.zoom}/${tx}/${ty}`, [tx, ty]);
     }
-    await Promise.all([...needed.values()].map(([tx, ty]) => this.loadTile(tx, ty)));
+    // The batch holds its own references: a big graph needs more tiles than
+    // LRU_CAP, so sampling from `this.tiles` would read tiles the batch's own
+    // later prefetches already evicted.
+    const grids = new Map<string, Float32Array>();
+    await Promise.all(
+      [...needed].map(async ([key, [tx, ty]]) => {
+        grids.set(key, await this.loadTile(tx, ty));
+      }),
+    );
 
     const out = new Float32Array(lats.length);
     for (let i = 0; i < lats.length; i++) {
@@ -150,7 +158,7 @@ export class TerrainSampler {
       const yf = latToTileY(lats[i]!, this.zoom);
       const tx = Math.floor(xf);
       const ty = Math.floor(yf);
-      const grid = this.tiles.get(`${this.zoom}/${tx}/${ty}`)!;
+      const grid = grids.get(`${this.zoom}/${tx}/${ty}`)!;
       out[i] = bilinearSample(
         grid,
         TILE_SIZE,

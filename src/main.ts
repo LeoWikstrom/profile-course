@@ -223,9 +223,7 @@ initWeightControls();
 initDrawProfile((profile) => {
   gpxLabel = 'Drawn profile';
   gpxInput.value = '';
-  setFullProfile(profile);
-  // setFullProfile only fills an empty distance; the drawing is explicit.
-  distanceInput.value = (profile.totalDistance / 1000).toFixed(1);
+  setFullProfile(profile, true);
   startHint.textContent =
     map.getStart() === null
       ? 'Drawn profile loaded — tap the map to set a start point.'
@@ -1243,7 +1241,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (!pendingGpx) break;
       const points = pendingGpx.points.map((p, i) => ({ ...p, ele: msg.elevations[i]! }));
       pendingGpx = null;
-      setFullProfile(buildTargetProfile(points));
+      setFullProfile(buildTargetProfile(points), true);
       break;
     }
     case 'prepared':
@@ -1432,7 +1430,13 @@ useTraces.addEventListener('change', () => {
   persistSession();
 });
 
-function setFullProfile(profile: TargetProfile): void {
+/**
+ * `fresh` is a race the user just loaded (or drew): course distance and the
+ * match-race-section window reset to the new race's own, since values tuned
+ * for the previous race mean nothing against this one. A session restore is
+ * not fresh — it must keep what was saved.
+ */
+function setFullProfile(profile: TargetProfile, fresh = false): void {
   fullProfile = profile;
   gpxStats.hidden = false;
   const label = gpxLabel ? `${gpxLabel}: ` : '';
@@ -1441,9 +1445,15 @@ function setFullProfile(profile: TargetProfile): void {
   const totalKm = profile.totalDistance / 1000;
   rangeTo.max = totalKm.toFixed(1);
   rangeFrom.max = rangeTo.max;
-  if (!rangeFrom.value) rangeFrom.value = '0';
-  if (!rangeTo.value || Number(rangeTo.value) > totalKm) rangeTo.value = totalKm.toFixed(1);
-  if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
+  if (fresh) {
+    rangeFrom.value = '0';
+    rangeTo.value = totalKm.toFixed(1);
+    distanceInput.value = totalKm.toFixed(1);
+  } else {
+    if (!rangeFrom.value) rangeFrom.value = '0';
+    if (!rangeTo.value || Number(rangeTo.value) > totalKm) rangeTo.value = totalKm.toFixed(1);
+    if (!distanceInput.value) distanceInput.value = totalKm.toFixed(1);
+  }
   updateRangeLabel();
   clearResult(); // a new race invalidates whatever course was on screen
   refreshTargetChart();
@@ -1739,7 +1749,7 @@ gpxInput.addEventListener('change', async () => {
     gpxLabel = gpx.name ?? file.name;
     clearResult();
     if (gpx.hasElevation) {
-      setFullProfile(buildTargetProfile(gpx.points));
+      setFullProfile(buildTargetProfile(gpx.points), true);
     } else {
       gpxStats.hidden = false;
       gpxStats.textContent = 'No elevation in GPX; fetching from terrain model…';
