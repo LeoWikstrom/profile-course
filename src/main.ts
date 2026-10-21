@@ -1472,19 +1472,21 @@ let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
 /** Row element per via, by identity, so reordering can be animated. */
 let viaRows = new Map<object, HTMLElement>();
 
-/** The course passes the vias in km order; the ones without a km come last. */
+/**
+ * The course visits the vias in list order. One with a km is pinned near that
+ * km, so the km-bearing vias must stand in km order among themselves; one
+ * without a km just falls somewhere between its neighbours — it keeps its
+ * place in the list and is moved with its ↑/↓ buttons instead.
+ */
 function sortVias(): void {
-  const key = (v: { km: number | null }) => (v.km === null ? Infinity : v.km);
-  viaPoints.sort((a, b) => (key(a) === key(b) ? 0 : key(a) < key(b) ? -1 : 1));
+  const timed = viaPoints.filter((v) => v.km !== null).sort((a, b) => a.km! - b.km!);
+  let ti = 0;
+  viaPoints = viaPoints.map((v) => (v.km === null ? v : timed[ti++]!));
 }
 
-/**
- * Rebuild the via list. `anchor` is the via the user is working on: the sheet
- * scrolls with it so that row stays put on screen while the others reorder.
- */
-function renderVias(anchor?: object): void {
+/** Rebuild the via list; the view stays put and the rows slide to their places. */
+function renderVias(): void {
   sortVias();
-  const anchorWas = anchor && viaRows.get(anchor)?.getBoundingClientRect().top;
   map.setViaMarkers(viaPoints, (i, p) => {
     viaPoints[i] = { ...viaPoints[i]!, lat: p.lat, lon: p.lon };
     renderVias();
@@ -1495,7 +1497,11 @@ function renderVias(anchor?: object): void {
   viaList.textContent = '';
   viaPoints.forEach((v, i) => {
     const li = document.createElement('li');
-    li.textContent = `${i + 1}: ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} — km `;
+    // The number matches the marker on the map; coordinates would say less.
+    const n = document.createElement('span');
+    n.className = 'via-n';
+    n.textContent = `${i + 1}:`;
+    li.append(n, 'at km ');
     const km = document.createElement('input');
     km.type = 'number';
     km.min = '0';
@@ -1505,7 +1511,7 @@ function renderVias(anchor?: object): void {
     if (v.km !== null) km.value = String(v.km);
     km.addEventListener('change', () => {
       v.km = km.value === '' ? null : Math.max(0, Number(km.value));
-      renderVias(v);
+      renderVias();
       persistSession();
     });
     li.appendChild(km);
@@ -1513,7 +1519,6 @@ function renderVias(anchor?: object): void {
     pick.textContent = 'pick on chart';
     pick.style.width = 'auto';
     pick.style.minHeight = '28px';
-    pick.style.marginLeft = '8px';
     pick.addEventListener('click', () => {
       if (!activeProfile()) return;
       // Bring the chart into view, then let the finger slide and commit on release.
@@ -1526,18 +1531,39 @@ function renderVias(anchor?: object): void {
         if (lastChartKm === null) return;
         v.km = Math.round(lastChartKm * 10) / 10;
         startHint.textContent = `Via point set to km ${v.km}`;
-        renderVias(v);
+        renderVias();
         persistSession();
       };
       targetChart.addEventListener('pointerup', commit, true);
       targetChart.addEventListener('pointercancel', commit, true);
     });
     li.appendChild(pick);
+    if (v.km === null) {
+      // No km means "between its neighbours" — these say which neighbours.
+      const move = (delta: number, glyph: string, label: string): void => {
+        const b = document.createElement('button');
+        b.textContent = glyph;
+        b.style.width = 'auto';
+        b.style.minHeight = '28px';
+        b.style.padding = '0 18px';
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.disabled = i + delta < 0 || i + delta >= viaPoints.length;
+        b.addEventListener('click', () => {
+          const j = i + delta;
+          [viaPoints[i], viaPoints[j]] = [viaPoints[j]!, viaPoints[i]!];
+          renderVias();
+          persistSession();
+        });
+        li.appendChild(b);
+      };
+      move(-1, '↑', 'Visit this via point earlier');
+      move(1, '↓', 'Visit this via point later');
+    }
     const del = document.createElement('button');
     del.textContent = '×';
     del.style.width = 'auto';
     del.style.minHeight = '28px';
-    del.style.marginLeft = '8px';
     del.addEventListener('click', () => {
       viaPoints.splice(i, 1);
       renderVias();
@@ -1547,11 +1573,6 @@ function renderVias(anchor?: object): void {
     viaList.appendChild(li);
     viaRows.set(v, li);
   });
-  if (anchor !== undefined && anchorWas !== undefined) {
-    const row = viaRows.get(anchor);
-    const dy = row ? row.getBoundingClientRect().top - anchorWas : 0;
-    if (Math.abs(dy) >= 1) sheetEl.scrollTop += dy;
-  }
   playReorder(wasAt, viaRows);
   addViaButton.disabled = false;
 }

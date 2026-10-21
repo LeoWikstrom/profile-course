@@ -51,7 +51,10 @@ export function renderInteractiveChart(
   svg.setAttribute('width', '100%');
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Elevation profiles of race and course');
-  svg.style.touchAction = 'none';
+  // A vertical swipe scrolls the sheet; only a sideways drag scrubs. When the
+  // scroller takes the gesture the chart gets a pointercancel, which hides
+  // the crosshair without committing a pick.
+  svg.style.touchAction = 'pan-y';
 
   const x = (i: number) => pad + ((i * SAMPLE_STEP_M) / maxDist) * (width - 2 * pad);
   const y = (v: number) => height - pad - ((v - min) / (max - min)) * (height - pad - padTop);

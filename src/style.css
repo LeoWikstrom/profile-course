@@ -949,6 +949,30 @@ dl.shortcuts kbd {
   font-size: 0.9rem;
 }
 
+/* One row per via: its number (matching the map marker), the km box and the
+   small buttons; 6px between lines if it ever has to wrap. The list's own
+   indent is dropped — the row needs the full panel width on desktop. */
+#via-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+#via-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 6px 0 12px;
+}
+
+.via-n {
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 1.1em;
+  text-align: center;
+}
+
 /* The drawing pad: the graph with its vertical max-elevation slider beside
    it, the length slider underneath. */
 #draw-wrap {

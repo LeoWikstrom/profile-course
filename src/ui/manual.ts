@@ -49,8 +49,9 @@ const SECTIONS: [heading: string, ...paragraphs: string[]][] = [
     'Via points',
     'Add via point, then tap the map: the course must pass there, in list order. Each ' +
       'via can be pinned to a km of the course, with an adjustable ± window, or left ' +
-      'unpinned. While placing one, you can also pick its distance by pressing on the ' +
-      'chart and letting go.',
+      'unpinned — then it is simply visited somewhere between its neighbours in the ' +
+      'list, and its ↑/↓ buttons say which neighbours. While placing one, you can also ' +
+      'pick its distance by pressing on the chart and letting go.',
   ],
   [
     'Courses and tabs',

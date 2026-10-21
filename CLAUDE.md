@@ -124,9 +124,15 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       by Leo.
 - [x] **Via points**: must-pass markers (optional km each, adjustable ± window, pick-on-chart),
       enforced as a visit-order bitmask in the beam with reachability pruning; improve pass
-      cannot remove a via. Resolution is point-to-segment, 25 m radius. The list orders itself by
-      km (no km = last); editing one km re-sorts the list around that row, which is held still by
-      scrolling the sheet to match.
+      cannot remove a via. Resolution is point-to-segment, 25 m radius. The course visits the
+      list in order: km-bearing vias sort by km *among themselves*, while a via without a km
+      keeps its place in the list — visited somewhere between its neighbours, exactly when
+      unimportant — and carries ↑/↓ buttons to change which neighbours (2026-10-21; they only
+      swap positions, which cannot break the km order of the others). Each row is one flex line:
+      a bold accent number matching the map marker (`.via-n` — coordinates said less), the km
+      box, pick-on-chart, ↑/↓, ×. Reordering slides the rows (FLIP) with the view held still —
+      the old anchor-scrolling that kept the edited row fixed is gone. The via tolerance lives
+      in Advanced settings → Search, not in the via subgroup.
 - [x] **Comparison GPX**: upload an own course, map-matched (connectors on, skip-ahead over
       gaps), scored like a generated course, with an Improve button.
 - [x] **Editing mode**: persistent — pull the course where you want it, or tap a point then its
