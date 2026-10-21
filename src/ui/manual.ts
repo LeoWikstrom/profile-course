@@ -87,6 +87,10 @@ const SECTIONS: [heading: string, ...paragraphs: string[]][] = [
     'Upload a course of your own under Advanced settings and it is matched to the path ' +
       'network and scored exactly like a generated one — then edit it, or press ↻ to ' +
       'let the search improve it.',
+    'You can also draw the race profile you want instead of uploading one: set the ' +
+      'length and elevation range with the sliders, pull the knob right to draw and ' +
+      'left to erase (climbs are capped at 20 %), and press Use as input. The drawing ' +
+      'then stands in for the race GPX.',
   ],
   [
     'Offline areas',

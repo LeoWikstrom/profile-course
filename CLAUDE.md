@@ -372,6 +372,35 @@ subgroup). Each weight is a small number box synced to a slider (0–10 or 0–1
 accepts more and the slider then pegs — `collectWeights` still reads only the boxes, so the
 sliders are pure UI. The untracked row greys out with its checkbox (`reflectUseTraces`).
 
+**Draw your own profile** (Leo, 2026-10-21): an SVG drawing pad in the Your own course subgroup
+(`src/ui/drawProfile.ts`). Grid scales come from two sliders — length 1–42.2 km (a marathon) and
+elevation range ±20–400 m; the vertical slider is `writing-mode: vertical-lr` and
+`touch-action: none` (its adjustment *is* a vertical gesture, so the global pan-y concession
+would steal every drag). The knob starts on the centre line (the start's own elevation, always
+0 — the profile is relative); pulling right draws 25 m samples, pulling left of it erases, and
+climbs are clamped to MAX_GRADE 20 % — a vertical pull advances a step per move event, so the
+cap shapes the ramp and sheer walls cannot be drawn. "Use as input" needs ≥ 1 km drawn, smooths the drawing first (two ±2-sample box-blur
+passes, ~250 m — a staircase becomes rolling terrain) and goes
+through `buildProfileFromSamples` (`gpx/profile.ts`) with turnsPerKm = 4 (a drawing says nothing
+about turns), then the ordinary `setFullProfile` path; it also sets the Course distance input
+explicitly, since `setFullProfile` only fills an empty one — stats, range slider, chart, persistence
+and Find course cannot tell it from a GPX. `gpxLabel` becomes "Drawn profile" and the GPX file
+input is cleared so the chooser does not claim a file that is no longer the target.
+
+**Stale-search gate**: a cancelled search keeps posting (`bestSoFar`, `courseProgress`,
+`coursesDone`, `noCourse`) until the worker yields and sees the cancel — and those used to paint
+ghosts of the old course over the next search. Worker messages are ordered, so `startSearch`
+sets `awaitingCourses` and the handlers drop those message types until the new search's own
+`courses` arrives (its prepare-stage `progress` texts still show, they come before `courses`).
+
+**Download-area prompt** (Leo, 2026-10-21): Find course over a start no saved area covers
+(centre within `radiusMeters` of any `savedAreas` entry) opens a dialog offering the download
+first. Download = fetch inside the dialog (mirrored to the Path network subsection), then close
++ search when the `areas` list lands; "Don't show again" = localStorage
+`profile-course.skipAreaPrompt`, global; ✕/Esc/backdrop = suppressed for that start point only
+(`areaPromptDismissedFor`, not persisted) and the search goes ahead — unless a download is
+running, which a ✕ leaves running. `openDialog` gained an optional `onClose` fired on any close.
+
 **Live search preview** (Leo, 2026-10-21): while a search runs, its best candidate so far shows
 faded on the map and as a translucent line on the chart, turning solid when the course lands.
 The beam's `onProgress` gained a fourth argument, `leader` — the top-ranked *partial* path

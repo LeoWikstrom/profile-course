@@ -3,13 +3,20 @@ import { parseGpx, type ParsedGpx } from './gpx/parse';
 import { SURFACE_PRESETS } from './search/score';
 import { haversineMeters } from './shared/geo';
 import { loadSession, requestPersistentStorage, saveSession } from './session';
-import type { CourseResult, CourseSegment, MainToWorker, WorkerToMain } from './shared/messages';
+import type {
+  AreaInfo,
+  CourseResult,
+  CourseSegment,
+  MainToWorker,
+  WorkerToMain,
+} from './shared/messages';
 import { createMap } from './ui/map';
 import { renderInteractiveChart } from './ui/profileChart';
 import { captureTops, playReorder, slideIn, slideOutRow } from './ui/animate';
 import { hideResult, renderCourseTabs, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
 import { closeDialog, dialogOpen, openDialog } from './ui/dialog';
+import { initDrawProfile } from './ui/drawProfile';
 import { manualContent } from './ui/manual';
 import { renderShortcuts, shortcutsContent } from './ui/shortcuts';
 import { guardSlidersAgainstScroll } from './ui/sliderGuard';
@@ -202,6 +209,20 @@ function showCandidate(index: number): void {
 
 renderShortcuts(document.getElementById('shortcuts-help') as HTMLElement);
 initWeightControls();
+// A drawn profile takes the uploaded GPX's place entirely: same stats line,
+// range slider, chart and session persistence — the search cannot tell.
+initDrawProfile((profile) => {
+  gpxLabel = 'Drawn profile';
+  gpxInput.value = '';
+  setFullProfile(profile);
+  // setFullProfile only fills an empty distance; the drawing is explicit.
+  distanceInput.value = (profile.totalDistance / 1000).toFixed(1);
+  startHint.textContent =
+    map.getStart() === null
+      ? 'Drawn profile loaded — tap the map to set a start point.'
+      : 'Drawn profile loaded — press Find course.';
+  persistSession();
+});
 guardSlidersAgainstScroll();
 (document.getElementById('open-manual') as HTMLButtonElement).addEventListener('click', () =>
   openDialog('Manual', manualContent()),
@@ -1036,6 +1057,10 @@ function startSearch(): void {
   if (!start || !profile) return;
   if (editingMode) exitEditing();
   searching = true;
+  // A cancelled search keeps posting until the worker yields; everything it
+  // says is stale now. Worker messages are ordered, so the next 'courses' is
+  // this search's own — until then its tabs, previews and courses are ghosts.
+  awaitingCourses = true;
   hideResult(resultEls);
   map.clearCourse();
   map.hideCoursePoint();
@@ -1144,6 +1169,9 @@ function renderTraces(traces: import('./shared/messages').TraceInfo[]): void {
 /** Set while a trace download is out, so its arrival can tick the checkbox. */
 let downloadingTraces = false;
 
+/** True from startSearch until its own 'courses' arrives — see startSearch. */
+let awaitingCourses = false;
+
 function tracesDone(): void {
   downloadingTraces = false;
   downloadTracesButton.textContent = 'Download GPS traces around start';
@@ -1157,12 +1185,20 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     case 'pong':
       console.log('worker alive');
       break;
-    case 'areas':
+    case 'areas': {
+      savedAreas = msg.areas;
       renderAreas(msg.areas);
       downloadAreaButton.textContent = 'Download area around start';
       downloadAreaButton.disabled = map.getStart() === null;
       areaProgress.hidden = true;
+      // A download the area prompt started: the list arriving means it saved.
+      if (areaPromptDownload) {
+        const done = areaPromptDownload.done;
+        areaPromptDownload = null;
+        done();
+      }
       break;
+    }
     case 'traces': {
       renderTraces(msg.traces);
       // Downloading them is asking for them: the checkbox is only unticked by
@@ -1200,6 +1236,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
         downloadAreaButton.textContent = msg.stage;
         areaProgress.hidden = false;
         areaProgress.value = msg.fraction;
+        if (areaPromptDownload) areaPromptDownload.progress.value = msg.fraction;
         break;
       }
       // The hint rather than the button: sharing a row with the GPX chooser
@@ -1210,11 +1247,13 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
           : `${msg.stage} ${Math.round(msg.fraction * 100)} %`;
       break;
     case 'bestSoFar':
+      if (awaitingCourses) break; // a cancelled search's ghost
       candidatePreviews[msg.index] = { segments: msg.segments, samples: msg.samples };
       // Only painted when that tab is what's on screen and still unfilled.
       if (msg.index === shownCandidate && !candidates[msg.index]) showPreview(msg.index);
       break;
     case 'courses':
+      awaitingCourses = false;
       candidates = Array.from({ length: msg.total }, () => null);
       candidateProgress = candidates.map(() => 0);
       candidatePreviews = candidates.map(() => null);
@@ -1222,10 +1261,12 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       drawCourseTabs();
       break;
     case 'courseProgress':
+      if (awaitingCourses) break;
       candidateProgress[msg.index] = msg.fraction;
       drawCourseTabs();
       break;
     case 'course': {
+      if (awaitingCourses) break;
       const profile = activeProfile();
       if (profile) {
         candidates[msg.index] = { course: msg.course, profile };
@@ -1243,6 +1284,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'coursesDone': {
+      if (awaitingCourses) break; // the cancelled search bowing out
       // Close the tabs no course could be found for.
       candidates.length = Math.max(msg.ready, 1);
       candidateProgress.length = candidates.length;
@@ -1284,11 +1326,13 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'noCourse':
+      if (awaitingCourses) break;
       clearResult();
       startHint.textContent = msg.message;
       searchDone();
       break;
     case 'error':
+      awaitingCourses = false;
       console.warn('worker:', msg.message);
       if (pendingEdit) {
         // The reroute failed, so the course is unchanged: drop the entry and
@@ -1658,8 +1702,107 @@ function updateFindEnabled(): void {
   findButton.disabled = !(fullProfile !== null && map.getStart() !== null);
 }
 
+/** "Don't show again" for the download-area prompt — global, all areas. */
+const AREA_PROMPT_SKIP_KEY = 'profile-course.skipAreaPrompt';
+let savedAreas: AreaInfo[] = [];
+/** ✕ on the prompt: not again for this start point (but a new point asks). */
+let areaPromptDismissedFor = '';
+/** Set while the prompt's own download runs, cleared when the areas list lands. */
+let areaPromptDownload: { progress: HTMLProgressElement; done: () => void } | null = null;
+
+function areaCovers(start: { lat: number; lon: number }): boolean {
+  return savedAreas.some(
+    (a) => haversineMeters(start.lat, start.lon, a.lat, a.lon) <= a.radiusMeters,
+  );
+}
+
+/**
+ * Searching off any downloaded area means asking the public Overpass servers
+ * every time — slow and flaky — so the Find button offers the download first.
+ * Download = fetch here in the dialog, then search; Don't show again = never
+ * ask anywhere; ✕/Esc = not for this start point, and the search goes ahead
+ * (a ✕ during the download leaves it running, visible under Path network).
+ */
+function promptAreaDownload(startKey: string): void {
+  const start = map.getStart();
+  if (!start) return;
+  let settled = false;
+  let downloading = false;
+
+  const wrap = document.createElement('div');
+  const info = document.createElement('p');
+  info.textContent =
+    'No downloaded path network covers this start point, so every search here must ask ' +
+    'the public Overpass servers — slow, and often unreliable. Download the area once ' +
+    'and searches run from your device instead, offline included.';
+  const label = document.createElement('label');
+  label.className = 'control';
+  const span = document.createElement('span');
+  span.textContent = 'Area radius (km)';
+  const select = areaRadius.cloneNode(true) as HTMLSelectElement;
+  select.removeAttribute('id');
+  select.value = areaRadius.value;
+  label.append(span, select);
+  const progress = document.createElement('progress');
+  progress.max = 1;
+  progress.value = 0;
+  progress.hidden = true;
+  const download = document.createElement('button');
+  download.textContent = 'Download area';
+  download.style.marginTop = '10px';
+  const skip = document.createElement('button');
+  skip.textContent = "Don't show again";
+  skip.style.marginTop = '8px';
+  wrap.append(info, label, download, skip, progress);
+
+  openDialog('Download this area first?', wrap, () => {
+    if (settled) return;
+    if (downloading) return; // the download keeps going; Path network shows it
+    areaPromptDismissedFor = startKey;
+    startSearch();
+  });
+
+  download.addEventListener('click', () => {
+    downloading = true;
+    skip.remove();
+    download.disabled = true;
+    download.textContent = 'Downloading…';
+    progress.hidden = false;
+    // The subsection mirrors the dialog, so a ✕ loses nothing.
+    areaRadius.value = select.value;
+    downloadAreaButton.disabled = true;
+    downloadAreaButton.textContent = 'Downloading…';
+    send({ type: 'downloadArea', center: start, radiusMeters: Number(select.value) * 1000 });
+    areaPromptDownload = {
+      progress,
+      done: () => {
+        settled = true;
+        if (dialogOpen()) {
+          closeDialog();
+          startSearch();
+        }
+      },
+    };
+  });
+
+  skip.addEventListener('click', () => {
+    settled = true;
+    localStorage.setItem(AREA_PROMPT_SKIP_KEY, '1');
+    closeDialog();
+    startSearch();
+  });
+}
+
 findButton.addEventListener('click', () => {
   seed = Math.max(1, Math.round(Number(seedInput.value)) || 1);
+  const start = map.getStart();
+  if (start && !areaCovers(start) && !localStorage.getItem(AREA_PROMPT_SKIP_KEY)) {
+    const key = `${start.lat.toFixed(4)},${start.lon.toFixed(4)}`;
+    if (key !== areaPromptDismissedFor) {
+      promptAreaDownload(key);
+      return;
+    }
+  }
   startSearch();
 });
 

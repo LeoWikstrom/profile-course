@@ -949,6 +949,38 @@ dl.shortcuts kbd {
   font-size: 0.9rem;
 }
 
+/* The drawing pad: the graph with its vertical max-elevation slider beside
+   it, the length slider underneath. */
+#draw-wrap {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  margin: 6px 0;
+}
+
+#draw-canvas {
+  flex: 1;
+  min-width: 0;
+}
+
+#draw-canvas svg {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--panel-bg);
+}
+
+/* Vertical: adjusting it is a vertical gesture, so the pan-y scroll
+   concession would steal every drag — none at all instead. */
+#draw-elev {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  min-height: 0;
+  touch-action: none;
+}
+
 /* The legend: what the colours on the map mean. Line swatches for the course,
    dots for the markers; each sets its colour in --c inline. */
 #legend {

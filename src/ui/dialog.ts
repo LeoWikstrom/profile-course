@@ -40,11 +40,14 @@ function ensure(): HTMLDivElement {
   return overlay;
 }
 
-export function openDialog(title: string, content: Node): void {
+let onCloseCb: (() => void) | null = null;
+
+export function openDialog(title: string, content: Node, onClose?: () => void): void {
   const el = ensure();
   titleEl.textContent = title;
   overlay!.setAttribute('aria-label', title);
   bodyEl.replaceChildren(content);
+  onCloseCb = onClose ?? null;
   el.hidden = false;
   slideIn(el);
   closeEl.focus();
@@ -59,4 +62,8 @@ export function closeDialog(): void {
   overlay.hidden = true;
   // Focus was moved onto the ✕, which is now gone from the page.
   closeEl.blur();
+  // However it closed — ✕, Esc, backdrop or a caller — the owner hears once.
+  const cb = onCloseCb;
+  onCloseCb = null;
+  cb?.();
 }
