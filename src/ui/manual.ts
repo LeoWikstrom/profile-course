@@ -120,10 +120,11 @@ const SECTIONS: [heading: string, ...paragraphs: string[]][] = [
   ],
   [
     'Sharing and persistence',
-    'Copy link (🔗) puts the start, settings, seed and shown course into the address ' +
-      'bar — anyone opening it gets the same course found for them. Everything you do ' +
-      'is also saved on the device: closing or reloading the tab brings back the race, ' +
-      'the settings, every course tab and your edits.',
+    'Copy link (🔗) encodes the start, settings and seed into the address bar. Anyone ' +
+      'opening it runs the same search and gets the same first course — but the link ' +
+      'does not carry which tab was selected or any hand edits made after the search. ' +
+      'Everything you do is also saved on the device: closing or reloading the tab ' +
+      'brings back the race, the settings, every course tab and your edits.',
   ],
 ];
 

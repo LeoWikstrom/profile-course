@@ -1,5 +1,5 @@
 import type { LatLon } from '../shared/messages';
-import { cacheGet, cacheSet } from './cache';
+import { cacheGet, cacheSet, cacheSetOrThrow } from './cache';
 import type { TraceGrid, TraceYield } from './traces';
 
 export interface StoredTraces {
@@ -37,7 +37,8 @@ export async function saveTraces(
     kept: found.kept,
     cells: found.grid.cells.length,
   };
-  await cacheSet(`trace:${entry.id}`, found.grid);
+  // Write payload first; a quota error here surfaces before the index is touched.
+  await cacheSetOrThrow(`trace:${entry.id}`, found.grid);
   const all = (await listTraces()).filter((t) => t.id !== entry.id);
   all.push(entry);
   await cacheSet(INDEX_KEY, all);
@@ -63,7 +64,9 @@ export async function loadTraceCounts(): Promise<Map<number, number>> {
     if (!grid) continue;
     for (let i = 0; i < grid.cells.length; i++) {
       const id = grid.cells[i]!;
-      merged.set(id, (merged.get(id) ?? 0) + grid.counts[i]!);
+      // Max, not sum: overlapping downloads fetched the same public traces,
+      // so a sum counted the same points twice wherever the circles overlap.
+      merged.set(id, Math.max(merged.get(id) ?? 0, grid.counts[i]!));
     }
   }
   return merged;

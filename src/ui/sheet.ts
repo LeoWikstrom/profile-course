@@ -124,8 +124,12 @@ export function initSheet(
 
   // Rotating the phone changes every stop's offset.
   window.addEventListener('resize', () => {
-    if (isWide()) spacer.style.height = '0px';
-    else setLevel(level);
+    if (isWide()) {
+      spacer.style.height = '0px';
+      // Clear any translateY left from mobile so the desktop sidebar sits flush.
+      sheet.style.transform = '';
+      sheet.style.transition = '';
+    } else setLevel(level);
   });
 
   const finish = (e: PointerEvent) => {

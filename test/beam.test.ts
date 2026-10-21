@@ -64,7 +64,14 @@ describe('beamSearch on the Skatås fixture', () => {
     );
 
     const beam = await beamSearch(graph, startNode, target, target.totalDistance, { seed: 1 });
-    const improved = await improveCandidates(graph, startNode, beam, target, target.totalDistance, {});
+    const improved = await improveCandidates(
+      graph,
+      startNode,
+      beam,
+      target,
+      target.totalDistance,
+      {},
+    );
     const walk = await randomWalkSearch(graph, startNode, target, target.totalDistance, {
       seed: 1,
       walks: 500,

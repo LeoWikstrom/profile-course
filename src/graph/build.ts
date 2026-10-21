@@ -118,15 +118,22 @@ function connectCrossings(
   // Spatial hash of way segments (and separator segments).
   interface Seg {
     wayIdx: number;
-    ax: number; ay: number; bx: number; by: number;
-    aId: number; bId: number;
+    ax: number;
+    ay: number;
+    bx: number;
+    by: number;
+    aId: number;
+    bId: number;
   }
   const segHash = new Map<number, Seg[]>();
   const sepSegs = new Map<number, [number, number, number, number][]>();
   const register = (
     hash: Map<number, unknown[]>,
     item: unknown,
-    ax: number, ay: number, bx: number, by: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
   ) => {
     const x0 = Math.min(ax, bx) - CELL;
     const x1 = Math.max(ax, bx) + CELL;
@@ -153,9 +160,22 @@ function connectCrossings(
       const a = xyOf(nodes[j - 1]!);
       const b = xyOf(nodes[j]!);
       if (!a || !b) continue;
-      register(segHash as Map<number, unknown[]>, {
-        wayIdx: wi, ax: a[0], ay: a[1], bx: b[0], by: b[1], aId: nodes[j - 1]!, bId: nodes[j]!,
-      }, a[0], a[1], b[0], b[1]);
+      register(
+        segHash as Map<number, unknown[]>,
+        {
+          wayIdx: wi,
+          ax: a[0],
+          ay: a[1],
+          bx: b[0],
+          by: b[1],
+          aId: nodes[j - 1]!,
+          bId: nodes[j]!,
+        },
+        a[0],
+        a[1],
+        b[0],
+        b[1],
+      );
     }
   }
   for (const sep of separators) {
@@ -163,7 +183,14 @@ function connectCrossings(
       const a = xyOf(sep.nodes[j - 1]!);
       const b = xyOf(sep.nodes[j]!);
       if (!a || !b) continue;
-      register(sepSegs as unknown as Map<number, unknown[]>, [a[0], a[1], b[0], b[1]], a[0], a[1], b[0], b[1]);
+      register(
+        sepSegs as unknown as Map<number, unknown[]>,
+        [a[0], a[1], b[0], b[1]],
+        a[0],
+        a[1],
+        b[0],
+        b[1],
+      );
     }
   }
 
@@ -185,6 +212,15 @@ function connectCrossings(
   let synthetic = -1;
   const wayCount = ways.length;
   const wayNodeSets = new Map<number, Set<number>>();
+  /**
+   * Nodes already inserted into a hashed segment, with their projection t —
+   * a second split of the same segment must land in t order, or the way's
+   * geometry zigzags. Keyed by Seg identity (one object, however many cells).
+   */
+  const segSplits = new Map<object, { t: number; id: number }[]>();
+  /** Ways whose node lists were copied before splicing: the response is a
+   * cache object and may be handed out again for a rebuild. */
+  const copiedWays = new Set<number>();
   const nodeSetOf = (wi: number): Set<number> => {
     let s = wayNodeSets.get(wi);
     if (!s) wayNodeSets.set(wi, (s = new Set(ways[wi]!.nodes)));
@@ -223,7 +259,10 @@ function connectCrossings(
             const dx = s.bx - s.ax;
             const dy = s.by - s.ay;
             const len2 = dx * dx + dy * dy;
-            const t = len2 > 0 ? Math.max(0, Math.min(1, ((e[0] - s.ax) * dx + (e[1] - s.ay) * dy) / len2)) : 0;
+            const t =
+              len2 > 0
+                ? Math.max(0, Math.min(1, ((e[0] - s.ax) * dx + (e[1] - s.ay) * dy) / len2))
+                : 0;
             const px = s.ax + t * dx;
             const py = s.ay + t * dy;
             const dist = Math.hypot(e[0] - px, e[1] - py);
@@ -247,6 +286,17 @@ function connectCrossings(
       else if (t > 0.7) targetId = seg.bId;
       else {
         // Split the target way: insert a new node at the projection point.
+        if (!copiedWays.has(seg.wayIdx)) {
+          const original = ways[seg.wayIdx]!;
+          ways[seg.wayIdx] = { ...original, nodes: [...original.nodes] };
+          copiedWays.add(seg.wayIdx);
+        }
+        const targetWay = ways[seg.wayIdx]!;
+        const splits = segSplits.get(seg) ?? [];
+        const base = targetWay.nodes.indexOf(seg.aId);
+        // After k splits, bId sits k+1 past aId; anything else means the way
+        // visits these nodes in some order this bookkeeping cannot follow.
+        if (base < 0 || targetWay.nodes[base + 1 + splits.length] !== seg.bId) continue;
         targetId = synthetic--;
         const aC = nodeCoord.get(seg.aId)!;
         const bC = nodeCoord.get(seg.bId)!;
@@ -254,10 +304,10 @@ function connectCrossings(
           lat: aC.lat + t * (bC.lat - aC.lat),
           lon: aC.lon + t * (bC.lon - aC.lon),
         });
-        const targetWay = ways[seg.wayIdx]!;
-        const insertAt = targetWay.nodes.indexOf(seg.bId, targetWay.nodes.indexOf(seg.aId));
-        if (insertAt <= 0) continue;
+        const insertAt = base + 1 + splits.filter((s) => s.t < t).length;
         targetWay.nodes.splice(insertAt, 0, targetId);
+        splits.push({ t, id: targetId });
+        segSplits.set(seg, splits);
         usage.set(targetId, 1);
       }
 
@@ -279,8 +329,14 @@ function toXY(lat: number, lon: number, cosLat: number): [number, number] {
 }
 
 function segmentsIntersect(
-  ax: number, ay: number, bx: number, by: number,
-  cx: number, cy: number, dx: number, dy: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
 ): boolean {
   const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
   const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
@@ -289,10 +345,7 @@ function segmentsIntersect(
   return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
-export function buildGraph(
-  response: OverpassResponse,
-  opts: { connectors?: boolean } = {},
-): Graph {
+export function buildGraph(response: OverpassResponse, opts: { connectors?: boolean } = {}): Graph {
   const nodeCoord = new Map<number, { lat: number; lon: number }>();
   const signalNodes = new Set<number>();
   const ways: OverpassWay[] = [];
@@ -431,14 +484,53 @@ export function buildGraph(
 }
 
 /** Nearest graph node to (lat, lon) within maxDistM, or -1. */
+const SNAP_CELL_M = 64;
+/** Per-graph node cell hash: map-matching snaps a waypoint every ~80 m, and a
+ * full scan per snap made uploads quadratic-ish in course length. */
+const snapIndexCache = new WeakMap<Graph, Map<number, number[]>>();
+
+function snapMPerLon(graph: Graph): number {
+  return 111320 * Math.cos(((graph.nodeLat[0] ?? 57) * Math.PI) / 180);
+}
+
+function snapIndex(graph: Graph): Map<number, number[]> {
+  let idx = snapIndexCache.get(graph);
+  if (idx) return idx;
+  idx = new Map();
+  const mPerLon = snapMPerLon(graph);
+  for (let i = 0; i < graph.nodeLat.length; i++) {
+    const cy = Math.round((graph.nodeLat[i]! * 111320) / SNAP_CELL_M);
+    const cx = Math.round((graph.nodeLon[i]! * mPerLon) / SNAP_CELL_M);
+    const key = cy * 1_000_003 + cx;
+    let bucket = idx.get(key);
+    if (!bucket) idx.set(key, (bucket = []));
+    bucket.push(i);
+  }
+  snapIndexCache.set(graph, idx);
+  return idx;
+}
+
 export function snapToNode(graph: Graph, lat: number, lon: number, maxDistM = 100): number {
+  if (graph.nodeLat.length === 0) return -1;
+  const idx = snapIndex(graph);
+  const mPerLon = snapMPerLon(graph);
+  const cy0 = Math.round((lat * 111320) / SNAP_CELL_M);
+  const cx0 = Math.round((lon * mPerLon) / SNAP_CELL_M);
+  // +1 covers the cell rounding: any node within maxDistM lies in this ring.
+  const r = Math.ceil(maxDistM / SNAP_CELL_M) + 1;
   let best = -1;
   let bestDist = maxDistM;
-  for (let i = 0; i < graph.nodeLat.length; i++) {
-    const d = haversineMeters(lat, lon, graph.nodeLat[i]!, graph.nodeLon[i]!);
-    if (d <= bestDist) {
-      bestDist = d;
-      best = i;
+  for (let cy = cy0 - r; cy <= cy0 + r; cy++) {
+    for (let cx = cx0 - r; cx <= cx0 + r; cx++) {
+      const bucket = idx.get(cy * 1_000_003 + cx);
+      if (!bucket) continue;
+      for (const i of bucket) {
+        const d = haversineMeters(lat, lon, graph.nodeLat[i]!, graph.nodeLon[i]!);
+        if (d <= bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
     }
   }
   return best;
@@ -501,7 +593,10 @@ export function pruneDeadEnds(graph: Graph, keepNode: number): { graph: Graph; k
 }
 
 /** Keep only nodes/edges reachable from startNode; returns the new graph and start index. */
-export function filterToComponent(graph: Graph, startNode: number): { graph: Graph; startNode: number } {
+export function filterToComponent(
+  graph: Graph,
+  startNode: number,
+): { graph: Graph; startNode: number } {
   const n = graph.nodeLat.length;
   const visited = new Uint8Array(n);
   const stack = [startNode];
@@ -639,7 +734,10 @@ export function shapeBridgeChains(graph: Graph): void {
       chain[0]!.fromNode === first.a ? first.elev![0]! : first.elev![first.elev!.length - 1]!,
     );
     const endNodeIsA = otherNode(last, chain[chain.length - 1]!.fromNode) === last.a;
-    const groundB = Math.min(crest, endNodeIsA ? last.elev![0]! : last.elev![last.elev!.length - 1]!);
+    const groundB = Math.min(
+      crest,
+      endNodeIsA ? last.elev![0]! : last.elev![last.elev!.length - 1]!,
+    );
 
     const profileAt = (d: number): number => {
       if (d < rampLen) return groundA + ((crest - groundA) * d) / rampLen;
@@ -698,7 +796,12 @@ export async function sampleEdgeElevations(graph: Graph, sampler: TerrainSampler
       cellIds[k] = cellIdAt(la, lo);
       const k2 = Math.min(k + 1, count - 1);
       const k1 = k2 === k ? k - 1 : k;
-      cellHead[k] = bearingDeg(lats[offset + k1]!, lons[offset + k1]!, lats[offset + k2]!, lons[offset + k2]!);
+      cellHead[k] = bearingDeg(
+        lats[offset + k1]!,
+        lons[offset + k1]!,
+        lats[offset + k2]!,
+        lons[offset + k2]!,
+      );
     }
     edge.cellIds = cellIds;
     edge.cellHead = cellHead;

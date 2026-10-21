@@ -36,7 +36,10 @@ export class FixtureSampler extends TerrainSampler {
     );
   }
 
-  override async elevations(lats: ArrayLike<number>, lons: ArrayLike<number>): Promise<Float32Array> {
+  override async elevations(
+    lats: ArrayLike<number>,
+    lons: ArrayLike<number>,
+  ): Promise<Float32Array> {
     const out = new Float32Array(lats.length);
     for (let i = 0; i < lats.length; i++) {
       out[i] = await this.elevationAt(lats[i]!, lons[i]!);

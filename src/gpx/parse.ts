@@ -12,7 +12,7 @@ export interface ParsedGpx {
 
 // Regex-based parser: DOMParser is unavailable in workers, and GPX point
 // extraction only needs trkpt/rtept attributes plus an optional child <ele>.
-const POINT_RE = /<(trkpt|rtept)\b([^>]*)>([\s\S]*?)<\/\1>|<(trkpt|rtept)\b([^>]*)\/>/g;
+const POINT_RE = /<(trkpt|rtept)\b([^>]*)\/>|<(trkpt|rtept)\b([^>]*)>([\s\S]*?)<\/\3>/g;
 const LAT_RE = /\blat\s*=\s*["']([^"']+)["']/;
 const LON_RE = /\blon\s*=\s*["']([^"']+)["']/;
 const ELE_RE = /<ele>\s*([-\d.eE+]+)\s*<\/ele>/;
@@ -23,9 +23,9 @@ export function parseGpx(xml: string): ParsedGpx {
   let sawTrkpt = false;
 
   for (const m of xml.matchAll(POINT_RE)) {
-    const tag = m[1] ?? m[4];
-    const attrs = m[2] ?? m[5] ?? '';
-    const body = m[3] ?? '';
+    const tag = m[1] ?? m[3];
+    const attrs = m[2] ?? m[4] ?? '';
+    const body = m[5] ?? '';
     if (tag === 'trkpt' && !sawTrkpt) {
       sawTrkpt = true;
       points.length = 0; // trkpt wins over any rtept collected earlier

@@ -1,7 +1,11 @@
 import { dijkstra, reconstructPath, type EdgePath } from './dijkstra';
 import { otherNode, type Graph } from './types';
 
-export function pathNodes(graph: Graph, path: { edges: number[]; dirs: number[] }, startNode: number): number[] {
+export function pathNodes(
+  graph: Graph,
+  path: { edges: number[]; dirs: number[] },
+  startNode: number,
+): number[] {
   const nodes = [startNode];
   let node = startNode;
   for (let i = 0; i < path.edges.length; i++) {

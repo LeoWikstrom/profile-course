@@ -100,6 +100,13 @@ export type MainToWorker =
   | { type: 'deleteTraces'; id: string }
   | {
       type: 'search';
+      /**
+       * Monotonic, set by the main thread. The worker treats a search whose
+       * generation is no longer the latest as cancelled, and echoes `gen` in
+       * every search-related reply so stale ones are dropped on arrival —
+       * worker replies otherwise land after local state has moved on.
+       */
+      generation: number;
       start: LatLon;
       radiusMeters: number;
       target: TargetTransfer;
@@ -200,6 +207,7 @@ export type WorkerToMain =
    */
   | {
       type: 'bestSoFar';
+      gen: number;
       index: number;
       segments: CourseSegment[];
       samples: Float32Array;
@@ -210,10 +218,10 @@ export type WorkerToMain =
    * by a `course` of its own search, and `coursesDone` closes any the search
    * could not fill with a course worth offering.
    */
-  | { type: 'courses'; total: number }
-  | { type: 'courseProgress'; index: number; fraction: number }
-  | { type: 'course'; index: number; course: CourseResult }
-  | { type: 'coursesDone'; ready: number }
+  | { type: 'courses'; gen: number; total: number }
+  | { type: 'courseProgress'; gen: number; index: number; fraction: number }
+  | { type: 'course'; gen: number; index: number; course: CourseResult }
+  | { type: 'coursesDone'; gen: number; ready: number }
   | { type: 'matched'; course: CourseResult; snappedFraction: number; improvable: boolean }
-  | { type: 'noCourse'; message: string }
+  | { type: 'noCourse'; gen: number; message: string }
   | { type: 'error'; message: string };

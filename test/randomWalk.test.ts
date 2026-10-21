@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildProfileFromSamples } from '../src/gpx/profile';
-import { buildGraph, filterToComponent, sampleEdgeElevations, snapToNode } from '../src/graph/build';
+import {
+  buildGraph,
+  filterToComponent,
+  sampleEdgeElevations,
+  snapToNode,
+} from '../src/graph/build';
 import type { Graph } from '../src/graph/types';
 import type { OverpassResponse } from '../src/net/overpass';
 import { assembleCourse } from '../src/search/score';

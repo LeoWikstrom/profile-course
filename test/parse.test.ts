@@ -58,6 +58,25 @@ describe('parseGpx on synthetic inputs', () => {
   });
 
   it('throws on fewer than 2 points', () => {
-    expect(() => parseGpx('<gpx><trk><trkseg><trkpt lat="1" lon="1"/></trkseg></trk></gpx>')).toThrow();
+    expect(() =>
+      parseGpx('<gpx><trk><trkseg><trkpt lat="1" lon="1"/></trkseg></trk></gpx>'),
+    ).toThrow();
+  });
+
+  it('handles mixed self-closing and wrapped trkpt in one trkseg', () => {
+    // Bug guard: self-closing after wrapped must not steal the next wrapped point's <ele>.
+    const xml = `<gpx><trk><trkseg>
+      <trkpt lat="57.0" lon="12.0"><ele>100</ele></trkpt>
+      <trkpt lat="57.001" lon="12.001"/>
+      <trkpt lat="57.002" lon="12.002"><ele>200</ele></trkpt>
+    </trkseg></trk></gpx>`;
+    const gpx = parseGpx(xml);
+    expect(gpx.points.length).toBe(3);
+    expect(gpx.points[0]?.ele).toBe(100);
+    expect(gpx.points[1]?.ele).toBeNull();
+    expect(gpx.points[2]?.ele).toBe(200);
+    expect(gpx.points[0]?.lat).toBe(57.0);
+    expect(gpx.points[1]?.lat).toBe(57.001);
+    expect(gpx.points[2]?.lat).toBe(57.002);
   });
 });

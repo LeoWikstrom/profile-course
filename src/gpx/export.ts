@@ -5,8 +5,7 @@ export interface ExportPoint {
 }
 
 export function buildGpx(name: string, desc: string, points: ExportPoint[]): string {
-  const esc = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const pts = points
     .map(
       (p) =>

@@ -122,7 +122,9 @@ export async function randomWalkSearch(
         if (distBack && dist + e.lengthM + distBack[otherNode(e, node)]! > maxLen) continue;
         const elev = e.elev!;
         const forward = e.a === node;
-        const edgeDelta = forward ? elev[elev.length - 1]! - elev[0]! : elev[0]! - elev[elev.length - 1]!;
+        const edgeDelta = forward
+          ? elev[elev.length - 1]! - elev[0]!
+          : elev[0]! - elev[elev.length - 1]!;
         const wantDelta = targetElevationAt(target, dist + e.lengthM) - targetDeltaBase;
         let w = Math.exp(-Math.abs(edgeDelta - wantDelta) / 8);
         w *= Math.exp(-2 * e.penalty);

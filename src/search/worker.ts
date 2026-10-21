@@ -107,7 +107,8 @@ async function downloadTraces(center: LatLon, radiusMeters: number): Promise<voi
       });
     },
   });
-  if (cancelled && found.kept === 0) {
+  // "Cancel stops it, and then nothing is saved" — the UI promises exactly that.
+  if (cancelled) {
     post({ type: 'traces', traces: await listTraces() });
     return;
   }
@@ -122,6 +123,12 @@ let startNode = -1;
 let validEnd: Uint8Array | null = null;
 let preparedKey = '';
 let cancelled = false;
+/**
+ * The latest search's generation (set by the main thread). A search whose
+ * generation is no longer this one is stale: a new `search` message must not
+ * revive a cancelled run or let two searches share graph/startNode/validEnd.
+ */
+let searchGen = 0;
 
 /** What the graph in hand was built from, so a course can name its own. */
 let preparedArgs: CoursePathRef['graph'] | null = null;
@@ -396,20 +403,26 @@ async function search(
   seed: number,
   algorithm: 'beam' | 'walk',
   opts: SearchOptionsIn,
+  gen: number,
 ): Promise<void> {
-  cancelled = false;
+  const stale = (): boolean => cancelled || gen !== searchGen;
   const t0 = performance.now();
   await ensurePrepared(start, radiusMeters, targetLengthMeters, opts.connectors);
+  if (stale()) return;
+  // Locals, not the module state: a newer search's ensurePrepared may replace
+  // graph/startNode/validEnd under this one before it next checks stale().
   const g = graph!;
+  const gStart = startNode;
+  const gValidEnd = validEnd;
   const profile: TargetProfile = target;
   const tGraph = performance.now();
 
   // A loop (return-to-start) needs a fixed anchor; otherwise the course may
   // begin anywhere inside the start/finish zone unless pinned to the marker.
   let startNodes: number[] | null = null;
-  if (!opts.startAtPoint && !opts.returnToStart && validEnd) {
+  if (!opts.startAtPoint && !opts.returnToStart && gValidEnd) {
     startNodes = [];
-    for (let i = 0; i < validEnd.length; i++) if (validEnd[i]) startNodes.push(i);
+    for (let i = 0; i < gValidEnd.length; i++) if (gValidEnd[i]) startNodes.push(i);
   }
 
   const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights ?? {}) };
@@ -428,7 +441,7 @@ async function search(
       : undefined;
 
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
-  post({ type: 'courses', total: MAX_COURSES });
+  post({ type: 'courses', gen, total: MAX_COURSES });
 
   // Each tab gets a search of its own, steered off the ground the courses
   // before it took — picking alternatives out of one search's runners-up gave
@@ -437,8 +450,11 @@ async function search(
   const avoidEdges = new Set<number>();
   const usedRoots: number[] = [];
 
-  for (let run = 0; run < MAX_COURSES && !cancelled; run++) {
+  for (let run = 0; run < MAX_COURSES && !stale(); run++) {
     const first = run === 0;
+    // A discarded run re-fills the same tab, so the tab index is how many
+    // courses have landed — `run` drifts past it after any discard.
+    const tab = picked.length;
     // Starting anywhere means the alternatives can also start elsewhere.
     const runStarts =
       startNodes && !first
@@ -461,7 +477,8 @@ async function search(
         bestStreamed = best.score;
         post({
           type: 'bestSoFar',
-          index: run,
+          gen,
+          index: tab,
           segments: pathSegments(g, best.path),
           samples: best.course.samples,
           score: best.score,
@@ -473,7 +490,8 @@ async function search(
       lastPreviewAt = now;
       post({
         type: 'bestSoFar',
-        index: run,
+        gen,
+        index: tab,
         segments: pathSegments(g, leader),
         samples: assembleCourse(g, leader).samples,
         score: null,
@@ -485,7 +503,7 @@ async function search(
       best: WalkCandidate | null,
       leader?: CoursePath | null,
     ): void => {
-      post({ type: 'courseProgress', index: run, fraction: (0.9 * done) / total });
+      post({ type: 'courseProgress', gen, index: tab, fraction: (0.9 * done) / total });
       post({
         type: 'progress',
         stage: first ? 'searching' : `alternative ${run + 1}`,
@@ -497,17 +515,17 @@ async function search(
 
     const candidates =
       algorithm === 'walk'
-        ? await randomWalkSearch(g, startNode, profile, targetLengthMeters, {
+        ? await randomWalkSearch(g, gStart, profile, targetLengthMeters, {
             seed: seed + run * 101,
             desiredMix: opts.desiredMix,
             returnToStart: opts.returnToStart,
             weights,
-            validEnd,
+            validEnd: gValidEnd,
             startNodes: runStarts,
             onProgress,
-            shouldCancel: () => cancelled,
+            shouldCancel: stale,
           })
-        : await beamSearch(g, startNode, profile, targetLengthMeters, {
+        : await beamSearch(g, gStart, profile, targetLengthMeters, {
             seed: seed + run * 101,
             beamWidth: Math.max(50, Math.min(800, opts.beamWidth || 200)),
             vias,
@@ -515,18 +533,19 @@ async function search(
             desiredMix: opts.desiredMix,
             returnToStart: opts.returnToStart,
             weights,
-            validEnd,
+            validEnd: gValidEnd,
             startNodes: runStarts,
             avoidEdges: first ? null : avoidEdges,
             onProgress,
-            shouldCancel: () => cancelled,
+            shouldCancel: stale,
           });
 
-    if (cancelled) break;
+    if (stale()) break;
     if (candidates.length === 0) {
       if (first) {
         post({
           type: 'noCourse',
+          gen,
           message: 'No course found within ±3 % of the target length. Try a larger radius.',
         });
         return;
@@ -543,45 +562,39 @@ async function search(
         bestScore: candidates[0]!.score,
       });
     }
-    const improved = await improveCandidates(
-      g,
-      startNode,
-      candidates,
-      profile,
-      targetLengthMeters,
-      {
-        desiredMix: opts.desiredMix,
-        weights,
-        validatePath,
-        shouldCancel: () => cancelled,
-        // The pass polishes each runner-up in turn; streaming the one in hand
-        // keeps the preview moving after "searching" reaches 90 %, and shows
-        // the runners-up being tried.
-        onProgress: (fraction, current) => {
-          post({ type: 'courseProgress', index: run, fraction: 0.9 + 0.1 * fraction });
-          if (first) {
-            post({
-              type: 'progress',
-              stage: 'improving',
-              fraction: 0.92 + 0.07 * fraction,
-              bestScore: current.score,
-            });
-          }
-          const now = performance.now();
-          if (now - lastPreviewAt < 200) return;
-          lastPreviewAt = now;
+    const improved = await improveCandidates(g, gStart, candidates, profile, targetLengthMeters, {
+      desiredMix: opts.desiredMix,
+      weights,
+      validatePath,
+      shouldCancel: stale,
+      // The pass polishes each runner-up in turn; streaming the one in hand
+      // keeps the preview moving after "searching" reaches 90 %, and shows
+      // the runners-up being tried.
+      onProgress: (fraction, current) => {
+        post({ type: 'courseProgress', gen, index: tab, fraction: 0.9 + 0.1 * fraction });
+        if (first) {
           post({
-            type: 'bestSoFar',
-            index: run,
-            segments: pathSegments(g, current.path),
-            samples: current.course.samples,
-            score: current.score,
+            type: 'progress',
+            stage: 'improving',
+            fraction: 0.92 + 0.07 * fraction,
+            bestScore: current.score,
           });
-        },
+        }
+        const now = performance.now();
+        if (now - lastPreviewAt < 200) return;
+        lastPreviewAt = now;
+        post({
+          type: 'bestSoFar',
+          gen,
+          index: tab,
+          segments: pathSegments(g, current.path),
+          samples: current.course.samples,
+          score: current.score,
+        });
       },
-    );
-    if (cancelled) break;
-    post({ type: 'courseProgress', index: run, fraction: 1 });
+    });
+    if (stale()) break;
+    post({ type: 'courseProgress', gen, index: tab, fraction: 1 });
 
     const winner = improved[0]!;
     // Steering can fail — a corridor with one way through has to stay usable.
@@ -599,7 +612,8 @@ async function search(
     }
     post({
       type: 'course',
-      index: picked.length,
+      gen,
+      index: tab,
       course: toResult(
         g,
         winner,
@@ -610,7 +624,7 @@ async function search(
     picked.push(winner);
   }
 
-  post({ type: 'coursesDone', ready: picked.length });
+  post({ type: 'coursesDone', gen, ready: picked.length });
 }
 
 async function matchCourse(
@@ -892,6 +906,9 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'search':
+      // Adopting the new generation is what cancels a still-running search.
+      searchGen = msg.generation;
+      cancelled = false;
       search(
         msg.start,
         msg.radiusMeters,
@@ -909,6 +926,7 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
           viaPoints: msg.viaPoints,
           viaToleranceKm: msg.viaToleranceKm,
         },
+        msg.generation,
       ).catch((err: unknown) =>
         post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );

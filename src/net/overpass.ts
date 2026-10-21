@@ -79,7 +79,8 @@ export function filterByRadius(
   const inside = (id: number): boolean => {
     const p = nodePos.get(id);
     if (!p) return false;
-    if (Math.abs(p.lat - center.lat) > latPad || Math.abs(p.lon - center.lon) > lonPad) return false;
+    if (Math.abs(p.lat - center.lat) > latPad || Math.abs(p.lon - center.lon) > lonPad)
+      return false;
     return haversineMeters(center.lat, center.lon, p.lat, p.lon) <= radiusMeters;
   };
 
@@ -137,10 +138,18 @@ export async function fetchNetwork(
   const query = buildQuery(center, radiusMeters);
   let lastError: unknown = null;
   // The public servers reject or hang individually and intermittently (quick
-  // 504s under load, dead mirrors), so fail fast per endpoint and make two
-  // rounds over all of them before giving up.
+  // 504s under load, dead mirrors), so fail fast per endpoint and make a few
+  // rounds over all of them before giving up. A guest keeps its manners:
+  // the pause between rounds backs off, a server's Retry-After is honoured,
+  // and nothing sleeps after the final round.
   const rounds = options.rounds ?? 2;
+  let retryAfterMs = 0;
   for (let round = 0; round < rounds; round++) {
+    if (round > 0) {
+      const backoff = 2_000 * 2 ** (round - 1);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(backoff, retryAfterMs)));
+      retryAfterMs = 0;
+    }
     for (let i = 0; i < ENDPOINTS.length; i++) {
       try {
         const controller = new AbortController();
@@ -154,7 +163,13 @@ export async function fetchNetwork(
           signal: controller.signal,
         });
         clearTimeout(timer);
-        if (!res.ok) throw new Error(`Overpass ${ENDPOINTS[i]} returned ${res.status}`);
+        if (!res.ok) {
+          const after = Number(res.headers.get('retry-after'));
+          if (Number.isFinite(after) && after > 0) {
+            retryAfterMs = Math.max(retryAfterMs, Math.min(after, 60) * 1000);
+          }
+          throw new Error(`Overpass ${ENDPOINTS[i]} returned ${res.status}`);
+        }
         timer = setTimeout(() => controller.abort(), 180_000);
         const json = await readWithProgress(res, options.onBytes, i);
         clearTimeout(timer);
@@ -167,9 +182,8 @@ export async function fetchNetwork(
         lastError = err;
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  throw new Error(`All Overpass endpoints failed twice: ${String(lastError)}`);
+  throw new Error(`All Overpass endpoints failed ${rounds} times over: ${String(lastError)}`);
 }
 
 export interface NetworkResult {
@@ -193,5 +207,8 @@ export async function getNetwork(
       return { response: filterByRadius(stored, center, radiusMeters), source: 'offline-area' };
     }
   }
-  return { response: await fetchNetwork(center, radiusMeters, options), source: 'cache-or-network' };
+  return {
+    response: await fetchNetwork(center, radiusMeters, options),
+    source: 'cache-or-network',
+  };
 }

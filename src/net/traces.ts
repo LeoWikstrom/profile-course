@@ -25,6 +25,8 @@ export interface TraceYield {
   kept: number;
   /** Boxes the API refused, after the retry. */
   failedBoxes: number;
+  /** Boxes silently capped at MAX_PAGES; their later pages were not fetched. */
+  truncated?: number;
 }
 
 /**
@@ -165,11 +167,13 @@ export async function fetchTracePoints(
   let points = 0;
   let timed = 0;
   let failedBoxes = 0;
+  let truncated = 0;
 
   for (let b = 0; b < boxes.length; b++) {
     if (opts.shouldCancel?.()) break;
     const box = boxes[b]!;
     const bbox = `${box.left.toFixed(5)},${box.bottom.toFixed(5)},${box.right.toFixed(5)},${box.top.toFixed(5)}`;
+    let hitMaxPages = true;
     for (let page = 0; page < MAX_PAGES; page++) {
       if (opts.shouldCancel?.()) break;
       let text: string;
@@ -177,6 +181,7 @@ export async function fetchTracePoints(
         text = await fetchPage(doFetch, bbox, page);
       } catch {
         failedBoxes++;
+        hitMaxPages = false;
         break;
       }
       const segments = parseTrackSegments(text);
@@ -186,29 +191,45 @@ export async function fetchTracePoints(
       timed += paced.timed;
       kept.push(...paced.kept);
       // A short page is the last one; the API pages in fixed 5 000s.
-      if (pageCount < PAGE_SIZE) break;
+      if (pageCount < PAGE_SIZE) {
+        hitMaxPages = false;
+        break;
+      }
     }
+    if (hitMaxPages) truncated++;
     opts.onProgress?.(b + 1, boxes.length, kept.length);
   }
 
-  return { grid: buildTraceGrid(kept), points, timed, kept: kept.length, failedBoxes };
+  return { grid: buildTraceGrid(kept), points, timed, kept: kept.length, failedBoxes, truncated };
 }
 
 async function fetchPage(doFetch: typeof fetch, bbox: string, page: number): Promise<string> {
   const url = `${API}?bbox=${bbox}&page=${page}`;
+  let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
-      const res = await doFetch(url, { headers: { Accept: 'application/gpx+xml' } });
+      const res = await doFetch(url, {
+        headers: { Accept: 'application/gpx+xml' },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
       if (res.ok) return await res.text();
-      // 509 is the API's bandwidth cap: backing off and retrying is the only
-      // thing that helps, and failing the box is better than hammering it.
-      if (res.status !== 429 && res.status !== 509 && res.status < 500) {
+      // Deterministic 4xx (except 429 rate-limit): retrying will not help.
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         throw new Error(`trackpoints API returned ${res.status}`);
       }
+      // 509 is the API's bandwidth cap: backing off and retrying is the only
+      // thing that helps, and failing the box is better than hammering it.
+      lastError = new Error(`trackpoints API returned ${res.status}`);
     } catch (err) {
-      if (attempt === 1) throw err;
+      clearTimeout(timer);
+      // Non-retryable 4xx: propagate immediately without a retry.
+      if (err instanceof Error && err.message.startsWith('trackpoints API returned 4')) throw err;
+      lastError = err;
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  throw new Error('trackpoints API is not answering');
+  throw lastError ?? new Error('trackpoints API is not answering');
 }

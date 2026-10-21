@@ -9,6 +9,13 @@ const COURSE_COLOR = '#c63d80';
 export interface ChartHandle {
   showSample(sampleIndex: number): void;
   hideSample(): void;
+  /**
+   * Swap the course line's data in place — a preview tick arriving several
+   * times a second must not rebuild the SVG and its listeners (it destroyed
+   * the crosshair mid-scrub). False when the chart was built without a
+   * course; the caller renders fully then.
+   */
+  updateCourse(samples: Float32Array): boolean;
 }
 
 /**
@@ -33,16 +40,23 @@ export function renderInteractiveChart(
 ): ChartHandle {
   container.textContent = '';
 
+  let courseSamples = course;
   let min = Infinity;
   let max = -Infinity;
-  for (const s of course ? [target, course] : [target]) {
-    for (const v of s) {
-      if (v < min) min = v;
-      if (v > max) max = v;
+  let maxDist = 0;
+  const computeScale = (): void => {
+    min = Infinity;
+    max = -Infinity;
+    for (const s of courseSamples ? [target, courseSamples] : [target]) {
+      for (const v of s) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
     }
-  }
-  if (max - min < 10) max = min + 10;
-  const maxDist = (Math.max(target.length, course?.length ?? 0) - 1) * SAMPLE_STEP_M;
+    if (max - min < 10) max = min + 10;
+    maxDist = (Math.max(target.length, courseSamples?.length ?? 0) - 1) * SAMPLE_STEP_M;
+  };
+  computeScale();
 
   const pad = 4;
   const padTop = 32; // room for the two crosshair label lines
@@ -60,24 +74,27 @@ export function renderInteractiveChart(
   const y = (v: number) => height - pad - ((v - min) / (max - min)) * (height - pad - padTop);
 
   const RACE_ONLY_COLOR = '#c63d80';
-  for (const { samples, color, opacity } of course
-    ? [
-        { samples: target, color: '#9ca3af', opacity: 1 },
-        { samples: course, color: COURSE_COLOR, opacity: opts?.faded ? 0.45 : 1 },
-      ]
-    : [{ samples: target, color: RACE_ONLY_COLOR, opacity: 1 }]) {
+  const linePoints = (samples: Float32Array): string => {
     const pts: string[] = [];
     for (let i = 0; i < samples.length; i++) {
       pts.push(`${x(i).toFixed(1)},${y(samples[i]!).toFixed(1)}`);
     }
+    return pts.join(' ');
+  };
+  const makeLine = (samples: Float32Array, color: string, opacity: number): SVGPolylineElement => {
     const line = document.createElementNS(SVG_NS, 'polyline');
-    line.setAttribute('points', pts.join(' '));
+    line.setAttribute('points', linePoints(samples));
     line.setAttribute('fill', 'none');
     line.setAttribute('stroke', color);
     line.setAttribute('stroke-opacity', String(opacity));
     line.setAttribute('stroke-width', '1.5');
     svg.appendChild(line);
-  }
+    return line;
+  };
+  const targetLine = makeLine(target, courseSamples ? '#9ca3af' : RACE_ONLY_COLOR, 1);
+  const courseLine = courseSamples
+    ? makeLine(courseSamples, COURSE_COLOR, opts?.faded ? 0.45 : 1)
+    : null;
 
   const crosshair = document.createElementNS(SVG_NS, 'line');
   crosshair.setAttribute('stroke', 'currentColor');
@@ -126,7 +143,7 @@ export function renderInteractiveChart(
   let at: number | null = null;
 
   function draw(sampleIndex: number): number {
-    const i = Math.max(0, Math.min(sampleIndex, (course ?? target).length - 1));
+    const i = Math.max(0, Math.min(sampleIndex, (courseSamples ?? target).length - 1));
     const cx = x(i);
     crosshair.setAttribute('x1', String(cx));
     crosshair.setAttribute('x2', String(cx));
@@ -138,10 +155,11 @@ export function renderInteractiveChart(
     const tx = String(anchorEnd ? cx - 6 : cx + 6);
     const km = ((i * SAMPLE_STEP_M) / 1000).toFixed(2);
 
-    if (course) {
+    if (courseSamples) {
+      const ci = Math.min(i, courseSamples.length - 1);
       dot.setAttribute('cx', String(cx));
-      dot.setAttribute('cy', String(y(course[i]!)));
-      text.textContent = `${km} km · ${course[i]!.toFixed(0)} m · ${gradeAt(course, i).toFixed(1)} %`;
+      dot.setAttribute('cy', String(y(courseSamples[ci]!)));
+      text.textContent = `${km} km · ${courseSamples[ci]!.toFixed(0)} m · ${gradeAt(courseSamples, ci).toFixed(1)} %`;
       text.setAttribute('text-anchor', anchor);
       text.setAttribute('x', tx);
     }
@@ -207,6 +225,15 @@ export function renderInteractiveChart(
     },
     hideSample() {
       hide(true);
+    },
+    updateCourse(samples) {
+      if (!courseLine) return false;
+      courseSamples = samples;
+      // The growing preview can stretch both scales, so both lines move.
+      computeScale();
+      targetLine.setAttribute('points', linePoints(target));
+      courseLine.setAttribute('points', linePoints(samples));
+      return true;
     },
   };
 }

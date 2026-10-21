@@ -79,9 +79,15 @@ describe('bridge and tunnel handling', () => {
         { type: 'way', id: 10, nodes: [1, 2], tags },
       ],
     });
-    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'yes' })).edges[0]!.levelled).toBe(true);
-    expect(buildGraph(mkResponse({ highway: 'footway', tunnel: 'yes' })).edges[0]!.levelled).toBe(true);
-    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'no' })).edges[0]!.levelled).toBe(false);
+    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'yes' })).edges[0]!.levelled).toBe(
+      true,
+    );
+    expect(buildGraph(mkResponse({ highway: 'footway', tunnel: 'yes' })).edges[0]!.levelled).toBe(
+      true,
+    );
+    expect(buildGraph(mkResponse({ highway: 'footway', bridge: 'no' })).edges[0]!.levelled).toBe(
+      false,
+    );
     expect(buildGraph(mkResponse({ highway: 'footway' })).edges[0]!.levelled).toBe(false);
   });
 
@@ -216,7 +222,9 @@ describe('traffic signals and corridor cells', () => {
     }
     const graph = buildGraph(response);
     await sampleEdgeElevations(graph, new Flat());
-    const up = graph.edges.findIndex((e) => e.surface === 0 && e.lengthM > 200 && e.lats[0] !== e.lats[1]);
+    const up = graph.edges.findIndex(
+      (e) => e.surface === 0 && e.lengthM > 200 && e.lats[0] !== e.lats[1],
+    );
     const bike = graph.edges.findIndex((e) => e.lengthM > 200);
     const foot = graph.edges.findIndex((e, i) => e.lengthM > 200 && i !== bike);
     const link = graph.edges.findIndex((e) => e.lengthM < 50);
@@ -228,9 +236,7 @@ describe('traffic signals and corridor cells', () => {
     // Orient: bike a->b, cross the link, foot back.
     const eBike = graph.edges[bike]!;
     const eFoot = graph.edges[foot]!;
-    const eLink = graph.edges.find(
-      (e) => e.lengthM < 50 && (e.a === eBike.b || e.b === eBike.b),
-    )!;
+    const eLink = graph.edges.find((e) => e.lengthM < 50 && (e.a === eBike.b || e.b === eBike.b))!;
     const linkIdx = graph.edges.indexOf(eLink);
     const bikeDir = 1; // a->b
     const linkDir = eLink.a === eBike.b ? 1 : 0;
@@ -271,12 +277,8 @@ describe('traffic signals and corridor cells', () => {
     }
     const graph = buildGraph(response);
     await sampleEdgeElevations(graph, new Flat());
-    const sides = graph.edges
-      .map((e, i) => ({ e, i }))
-      .filter(({ e }) => e.lengthM > 200);
-    const links = graph.edges
-      .map((e, i) => ({ e, i }))
-      .filter(({ e }) => e.lengthM < 50);
+    const sides = graph.edges.map((e, i) => ({ e, i })).filter(({ e }) => e.lengthM > 200);
+    const links = graph.edges.map((e, i) => ({ e, i })).filter(({ e }) => e.lengthM < 50);
     const first = sides[0]!;
     const eLink = links.find(({ e }) => e.a === first.e.b || e.b === first.e.b)!;
     const second = sides[1]!;

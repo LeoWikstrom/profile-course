@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { PNG } from 'pngjs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   TILE_SIZE,
+  TerrainSampler,
   bilinearSample,
   decodeTerrarium,
   latToTileY,
@@ -38,6 +39,81 @@ describe('bilinearSample', () => {
   it('clamps outside the grid', () => {
     expect(bilinearSample(grid, 2, 2, -5, -5)).toBe(0);
     expect(bilinearSample(grid, 2, 2, 5, 5)).toBe(30);
+  });
+});
+
+describe('TerrainSampler retry on fetch failure', () => {
+  // Stub browser APIs unavailable in Node so decodePng can run.
+  beforeEach(() => {
+    // Sea-level tile: every pixel R=128, G=0, B=0 → elevation 0 m.
+    const seaLevelRgba = new Uint8ClampedArray(TILE_SIZE * TILE_SIZE * 4);
+    for (let i = 0; i < TILE_SIZE * TILE_SIZE; i++) seaLevelRgba[i * 4] = 128;
+
+    vi.stubGlobal('createImageBitmap', async (_blob: Blob) => ({
+      width: TILE_SIZE,
+      height: TILE_SIZE,
+      close: () => undefined,
+    }));
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        constructor(
+          public width: number,
+          public height: number,
+        ) {}
+        getContext(_type: string) {
+          return {
+            drawImage: () => undefined,
+            getImageData: () => ({ data: seaLevelRgba }),
+          };
+        }
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('retries after a fetch failure and succeeds on the second call', async () => {
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      if (calls <= 2) throw new Error('network error');
+      return {
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const sampler = new TerrainSampler(13, mockFetch);
+
+    // First elevationAt: fetchTile tries twice internally (calls 1 and 2), both fail → rejects.
+    await expect(sampler.elevationAt(57.7046, 12.0381)).rejects.toThrow();
+
+    // The rejected promise must have been removed from pending, so a second call retries.
+    // This call uses attempt 3 → succeeds.
+    const elev = await sampler.elevationAt(57.7046, 12.0381);
+    expect(typeof elev).toBe('number');
+    expect(Number.isFinite(elev)).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  it('evicts LRU tile when the cache exceeds 64 entries', async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    })) as unknown as typeof fetch;
+
+    const sampler = new TerrainSampler(7, mockFetch);
+    // At zoom=7, tile width ≈ 2.8 deg. Load 65 distinct tiles via elevationAt.
+    for (let i = 0; i < 65; i++) {
+      await sampler.elevationAt(0, -180 + i * 2.9);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tilesMap = (sampler as any).tiles as Map<string, Float32Array>;
+    expect(tilesMap.size).toBeLessThanOrEqual(64);
   });
 });
 

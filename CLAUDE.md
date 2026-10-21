@@ -393,11 +393,43 @@ explicitly, since `setFullProfile` only fills an empty one — stats, range slid
 and Find course cannot tell it from a GPX. `gpxLabel` becomes "Drawn profile" and the GPX file
 input is cleared so the chooser does not claim a file that is no longer the target.
 
-**Stale-search gate**: a cancelled search keeps posting (`bestSoFar`, `courseProgress`,
-`coursesDone`, `noCourse`) until the worker yields and sees the cancel — and those used to paint
-ghosts of the old course over the next search. Worker messages are ordered, so `startSearch`
-sets `awaitingCourses` and the handlers drop those message types until the new search's own
-`courses` arrives (its prepare-stage `progress` texts still show, they come before `courses`).
+**Search generations** (replaced the earlier `awaitingCourses` gate after the 2026-10-21 code
+review): `startSearch` increments `searchGeneration` and sends it; the worker adopts it
+(`searchGen`), treats a search whose generation is stale as cancelled (`stale()` checked
+everywhere `cancelled` was — a new `search` message must not revive a cancelled run or let two
+searches share the module-level graph/startNode/validEnd, which search() now also captures into
+locals), and echoes `gen` in every search-related reply; main drops mismatches. Cancel and
+`clearResult` also bump the generation. Results pair with `searchProfile`/`matchedProfile`
+captured at *send* time — activeProfile() may have moved by arrival — and `matched` is dropped
+while a search runs. All per-tab indices use `picked.length` (a discarded run re-fills the same
+tab; `run` drifts past it). Undo is disabled while `pendingEdit` (the history entry is
+speculative; popping it before the reply loses the pre-edit course). Other review fixes:
+corridor-repeat sample distance measured from the edge's start (was inflated by its own edge
+length — 1 km boundary tests in test/score.test.ts pin it); connector splits of one segment
+insert in projection-t order and copy way node lists before splicing (the response object is a
+cache entry); GPX POINT_RE matches self-closing trkpts first (the wrapped alternative used to
+swallow the next point); terrain tiles clear their `pending` entry on fetch failure (one
+transient failure used to poison every later search) and are LRU-capped at 64; trace downloads
+time out, rethrow 4xx, flag MAX_PAGES truncation, and save nothing on cancel; store payloads
+write with `cacheSetOrThrow` *before* their index entry (quota failures surface instead of
+listing an area whose blob never landed); offline areas carry a schema version (pre-version
+entries grandfathered as v4); the beam's completion-gate slack derives from the penalty weight
+and its dedup key from the via count. Follow-ups done the same day: preview ticks update in place
+(`ChartHandle.updateCourse` rewrites both polylines' points without rebuilding the SVG or its
+listeners, so the crosshair survives; `map.drawPreview` mutates one translucent accent polyline
+via `setLatLngs`, taken down by drawCourse/clearCourse); `snapToNode` answers from a per-graph
+64 m cell hash (WeakMap-cached) instead of scanning every node per ~80 m match waypoint;
+Overpass retries back off per round, honour Retry-After (capped 60 s) and never sleep after the
+final round; `loadTraceCounts` merges stored grids with max-per-cell, since overlapping
+downloads fetched the same public traces. For item 11 the low-risk half-step was taken instead of
+compaction: StateStore is flat growable typed arrays (`newStateStore`/`growStore`, capacity
+doubling) — Int32/Int8 for the integer fields, Float64 for the rest so results stay
+bit-identical, same `s.field[i]` indexing in the hot loop. Integer fields halve, everything
+leaves the GC-scanned heap, growth is controlled doubling. Full mark-and-compact of
+parent-pointer history (the only way to actually *free* dead states mid-search) remains
+deliberately not done: it needs index remapping across parents/buckets/kept candidates, and a
+missed reference silently corrupts a course — only attempt against a measured memory baseline
+with bit-identical bench scores.
 
 **Download-area prompt** (Leo, 2026-10-21): Find course over a start no saved area covers
 (centre within `radiusMeters` of any `savedAreas` entry) opens a dialog offering the download

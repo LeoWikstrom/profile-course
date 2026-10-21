@@ -224,7 +224,10 @@ export function assembleCourse(graph: Graph, path: CoursePath): AssembledCourse 
         const idx = forward ? k : m2 - 1 - k;
         const cell = e.cellIds[idx]!;
         const head = forward ? e.cellHead[idx]! : (e.cellHead[idx]! + 180) % 360;
-        const d = distSoFar + k * spacing;
+        // distSoFar already includes this edge, so the sample's distance is
+        // measured from the edge's start — else every pass gap is inflated by
+        // one edge length and oscillation vs lap misclassifies near the window.
+        const d = distSoFar - e.lengthM + k * spacing;
         const prevPass = corridor.get(cell);
         if (prevPass && prevPass.edge !== ei) {
           // Same-edge reuse is handled below; this is the parallel case.

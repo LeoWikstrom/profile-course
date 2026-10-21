@@ -11,7 +11,7 @@ import type {
   WorkerToMain,
 } from './shared/messages';
 import { createMap } from './ui/map';
-import { renderInteractiveChart } from './ui/profileChart';
+import { renderInteractiveChart, type ChartHandle } from './ui/profileChart';
 import { captureTops, playReorder, slideIn, slideOutRow } from './ui/animate';
 import { hideResult, renderCourseTabs, renderResult, type ResultElements } from './ui/resultPanel';
 import { initSheet } from './ui/sheet';
@@ -144,6 +144,9 @@ let candidatePreviews: ({ segments: CourseSegment[]; samples: Float32Array } | n
 let shownCandidate = 0;
 const courseTabs = document.getElementById('course-tabs') as HTMLElement;
 
+/** The preview's chart, kept across ticks so only the line data moves. */
+let previewChart: { handle: ChartHandle; index: number } | null = null;
+
 /** A searching tab's live view: the best candidate so far, see-through. */
 function showPreview(index: number): void {
   const profile = activeProfile();
@@ -151,11 +154,15 @@ function showPreview(index: number): void {
   const preview = candidatePreviews[index];
   if (!preview) {
     // Nothing streamed yet: just the race profile, until the first best lands.
+    previewChart = null;
     renderInteractiveChart(targetChart, profile.samples, null, () => {});
     return;
   }
-  map.drawCourse(preview.segments, { faded: true });
-  renderInteractiveChart(
+  map.drawPreview(preview.segments);
+  // Ticks arrive several times a second: update the existing chart's line
+  // rather than rebuilding the SVG (which also killed a crosshair mid-scrub).
+  if (previewChart?.index === index && previewChart.handle.updateCourse(preview.samples)) return;
+  const handle = renderInteractiveChart(
     targetChart,
     profile.samples,
     preview.samples,
@@ -165,6 +172,7 @@ function showPreview(index: number): void {
     undefined,
     { faded: true },
   );
+  previewChart = { handle, index };
 }
 
 function drawCourseTabs(): void {
@@ -187,8 +195,9 @@ function drawCourseTabs(): void {
 function showCandidate(index: number): void {
   if (index === shownCandidate) return;
   const picked = candidates[index];
-  const searching = !picked && ((candidateProgress[index] ?? 0) > 0 || candidatePreviews[index]);
-  if (!picked && !searching) return;
+  const beingSearched =
+    !picked && ((candidateProgress[index] ?? 0) > 0 || candidatePreviews[index]);
+  if (!picked && !beingSearched) return;
   if (editingMode) exitEditing();
   shownCandidate = index;
   if (picked) {
@@ -274,7 +283,7 @@ window.addEventListener('keydown', (e) => {
   // The one shortcut that keeps its modifier. A field has its own undo, and
   // outside editing mode there is no history to undo — it is dropped on exit.
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z') {
-    if (typing || !editingMode || editHistory.length === 0) return;
+    if (typing || !editingMode || editHistory.length === 0 || pendingEdit) return;
     undoEdit();
     e.preventDefault();
     return;
@@ -426,6 +435,7 @@ function showResult(
   // the marker has to be found by distance rather than by the same index.
   const cum = cumulativeM(points);
   // The combined chart replaces the target-only chart at the top of the sheet.
+  previewChart = null;
   const chart = renderInteractiveChart(
     targetChart,
     result.profile.samples,
@@ -519,7 +529,7 @@ function refreshEditBar(): void {
       if (!editingMode) editBar.hidden = true;
     });
   }
-  editUndoButton.disabled = editHistory.length === 0;
+  editUndoButton.disabled = editHistory.length === 0 || pendingEdit;
   editNodesButton.setAttribute('aria-pressed', String(nodeMode));
   editDeleteButton.hidden = markedNodes.size === 0;
   editDeleteButton.textContent = markedNodes.size > 1 ? `Delete ${markedNodes.size}` : 'Delete';
@@ -780,9 +790,15 @@ function beginEdit(
   map.hideCoursePoint();
   map.hidePointLabel();
   map.hideEditWindow();
+  // The history entry above is speculative until the worker replies: an Undo
+  // now would pop it and still be overwritten by the arriving edit, losing
+  // the pre-edit course for good — so Undo waits.
+  refreshEditBar();
 }
 
 function editPayload(result: { course: CourseResult; profile: TargetProfile }) {
+  // The 'matched' reply must be paired with what it was scored against.
+  matchedProfile = result.profile;
   return {
     path: result.course.path,
     ...coursePointArrays(result.course),
@@ -1057,10 +1073,8 @@ function startSearch(): void {
   if (!start || !profile) return;
   if (editingMode) exitEditing();
   searching = true;
-  // A cancelled search keeps posting until the worker yields; everything it
-  // says is stale now. Worker messages are ordered, so the next 'courses' is
-  // this search's own — until then its tabs, previews and courses are ghosts.
-  awaitingCourses = true;
+  searchGeneration += 1;
+  searchProfile = profile;
   hideResult(resultEls);
   map.clearCourse();
   map.hideCoursePoint();
@@ -1073,6 +1087,7 @@ function startSearch(): void {
   const targetLength = Number(distanceInput.value) * 1000 || profile.totalDistance;
   send({
     type: 'search',
+    generation: searchGeneration,
     start,
     radiusMeters: Number(radiusSlider.value) * 1000,
     target: {
@@ -1107,6 +1122,8 @@ function searchDone(): void {
 
 cancelButton.addEventListener('click', () => {
   send({ type: 'cancel' });
+  // The search posts until the worker yields; a new generation mutes it.
+  if (!downloadingTraces) searchGeneration += 1;
   startHint.textContent = downloadingTraces ? 'Trace download cancelled.' : 'Search cancelled.';
   if (downloadingTraces) downloadTracesButton.textContent = 'Stopping…';
   if (!downloadingTraces) {
@@ -1169,8 +1186,19 @@ function renderTraces(traces: import('./shared/messages').TraceInfo[]): void {
 /** Set while a trace download is out, so its arrival can tick the checkbox. */
 let downloadingTraces = false;
 
-/** True from startSearch until its own 'courses' arrives — see startSearch. */
-let awaitingCourses = false;
+/**
+ * The latest search's generation. The worker echoes it in every search-related
+ * reply; anything carrying an older one is the ghost of a cancelled search —
+ * it keeps posting until the worker yields — and is dropped on arrival.
+ */
+let searchGeneration = 0;
+/**
+ * The profile the running search was asked to match, captured at send time:
+ * activeProfile() may have moved (range sliders, a new GPX) before results land.
+ */
+let searchProfile: TargetProfile | null = null;
+/** Likewise for what a 'matched' reply (upload/edit/improve) was scored against. */
+let matchedProfile: TargetProfile | null = null;
 
 function tracesDone(): void {
   downloadingTraces = false;
@@ -1247,27 +1275,29 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
           : `${msg.stage} ${Math.round(msg.fraction * 100)} %`;
       break;
     case 'bestSoFar':
-      if (awaitingCourses) break; // a cancelled search's ghost
+      if (msg.gen !== searchGeneration) break; // a cancelled search's ghost
       candidatePreviews[msg.index] = { segments: msg.segments, samples: msg.samples };
       // Only painted when that tab is what's on screen and still unfilled.
       if (msg.index === shownCandidate && !candidates[msg.index]) showPreview(msg.index);
       break;
     case 'courses':
-      awaitingCourses = false;
+      if (msg.gen !== searchGeneration) break;
       candidates = Array.from({ length: msg.total }, () => null);
       candidateProgress = candidates.map(() => 0);
       candidatePreviews = candidates.map(() => null);
+      previewChart = null;
       shownCandidate = 0;
       drawCourseTabs();
       break;
     case 'courseProgress':
-      if (awaitingCourses) break;
+      if (msg.gen !== searchGeneration) break;
       candidateProgress[msg.index] = msg.fraction;
       drawCourseTabs();
       break;
     case 'course': {
-      if (awaitingCourses) break;
-      const profile = activeProfile();
+      if (msg.gen !== searchGeneration) break;
+      // The profile this search was sent with, not whatever is active now.
+      const profile = searchProfile;
       if (profile) {
         candidates[msg.index] = { course: msg.course, profile };
         candidateProgress[msg.index] = 1;
@@ -1284,7 +1314,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'coursesDone': {
-      if (awaitingCourses) break; // the cancelled search bowing out
+      if (msg.gen !== searchGeneration) break; // the cancelled search bowing out
       // Close the tabs no course could be found for.
       candidates.length = Math.max(msg.ready, 1);
       candidateProgress.length = candidates.length;
@@ -1304,7 +1334,13 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'matched': {
-      const profile = activeProfile();
+      // Stale once a search has started since: drawing it would clobber the
+      // search's own preview, and searchDone() would re-enable Find mid-run.
+      if (searching) {
+        pendingEdit = false;
+        break;
+      }
+      const profile = matchedProfile;
       pendingEdit = false;
       if (profile) {
         replaceShownCandidate({ course: msg.course, profile });
@@ -1326,14 +1362,19 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'noCourse':
-      if (awaitingCourses) break;
+      if (msg.gen !== searchGeneration) break;
       clearResult();
       startHint.textContent = msg.message;
       searchDone();
       break;
     case 'error':
-      awaitingCourses = false;
       console.warn('worker:', msg.message);
+      // A failed area download must not leave the prompt modal stuck on a
+      // disabled "Downloading…" button — Overpass failures are common.
+      if (areaPromptDownload) {
+        areaPromptDownload = null;
+        if (dialogOpen()) closeDialog();
+      }
       if (pendingEdit) {
         // The reroute failed, so the course is unchanged: drop the entry and
         // marker that were added in anticipation.
@@ -1413,9 +1454,17 @@ function setFullProfile(profile: TargetProfile): void {
 /** Drop the proposed course: no stats, no advanced stats, no course buttons. */
 function clearResult(): void {
   if (editingMode) exitEditing();
+  // Invalidating the result invalidates any search still producing one.
+  if (searching) {
+    send({ type: 'cancel' });
+    searchGeneration += 1;
+    searchDone();
+  }
   lastResult = null;
   candidates = [];
   candidateProgress = [];
+  candidatePreviews = [];
+  previewChart = null;
   shownCandidate = 0;
   drawCourseTabs();
   lastAction = undefined;
@@ -1473,6 +1522,13 @@ let viaPoints: { lat: number; lon: number; km: number | null }[] = [];
 let viaRows = new Map<object, HTMLElement>();
 
 /**
+ * Disarm a pending pick-on-chart. The capture listeners otherwise stay armed
+ * forever, and the next chart release — however much later — would silently
+ * set the via's km from wherever the finger happened to be.
+ */
+let cancelViaPick: (() => void) | null = null;
+
+/**
  * The course visits the vias in list order. One with a km is pinned near that
  * km, so the km-bearing vias must stand in km order among themselves; one
  * without a km just falls somewhere between its neighbours — it keeps its
@@ -1521,19 +1577,27 @@ function renderVias(): void {
     pick.style.minHeight = '28px';
     pick.addEventListener('click', () => {
       if (!activeProfile()) return;
+      cancelViaPick?.();
       // Bring the chart into view, then let the finger slide and commit on release.
       sheet.restore();
       targetChart.scrollIntoView({ behavior: 'smooth', block: 'center' });
       startHint.textContent = 'Slide along the elevation chart and let go at the right km…';
       const commit = () => {
-        targetChart.removeEventListener('pointerup', commit, true);
-        targetChart.removeEventListener('pointercancel', commit, true);
+        cleanup();
         if (lastChartKm === null) return;
         v.km = Math.round(lastChartKm * 10) / 10;
         startHint.textContent = `Via point set to km ${v.km}`;
         renderVias();
         persistSession();
       };
+      const timer = setTimeout(() => cancelViaPick?.(), 30_000);
+      const cleanup = () => {
+        clearTimeout(timer);
+        targetChart.removeEventListener('pointerup', commit, true);
+        targetChart.removeEventListener('pointercancel', commit, true);
+        cancelViaPick = null;
+      };
+      cancelViaPick = cleanup;
       targetChart.addEventListener('pointerup', commit, true);
       targetChart.addEventListener('pointercancel', commit, true);
     });
@@ -1626,6 +1690,7 @@ function coursePointArrays(course: CourseResult): { lats: Float64Array; lons: Fl
 function sendImproveMatched(): void {
   const profile = activeProfile();
   if (!profile || !lastResult) return;
+  matchedProfile = profile;
   findButton.disabled = true;
   findButton.textContent = 'Improving…';
   send({
@@ -1648,6 +1713,7 @@ async function importCourseGpx(file: File | undefined): Promise<void> {
   }
   try {
     const gpx = parseGpx(await file.text());
+    matchedProfile = profile;
     findButton.disabled = true;
     findButton.textContent = 'Matching course…';
     send({

@@ -54,6 +54,9 @@ async function decodePng(bytes: ArrayBuffer): Promise<Float32Array> {
   return decodeTerrarium(data);
 }
 
+// Phone worker lives indefinitely; cap decoded tiles (~256 KB each) to limit memory.
+const LRU_CAP = 64;
+
 export class TerrainSampler {
   private tiles = new Map<string, Float32Array>();
   private pending = new Map<string, Promise<Float32Array>>();
@@ -68,15 +71,24 @@ export class TerrainSampler {
   private async loadTile(tx: number, ty: number): Promise<Float32Array> {
     const key = `${this.zoom}/${tx}/${ty}`;
     const loaded = this.tiles.get(key);
-    if (loaded) return loaded;
+    if (loaded) {
+      // Re-insert to mark as most-recently used.
+      this.tiles.delete(key);
+      this.tiles.set(key, loaded);
+      return loaded;
+    }
     let promise = this.pending.get(key);
     if (!promise) {
-      promise = this.fetchTile(tx, ty, key);
+      promise = this.fetchTile(tx, ty, key).finally(() => {
+        this.pending.delete(key);
+      });
       this.pending.set(key, promise);
     }
     const grid = await promise;
     this.tiles.set(key, grid);
-    this.pending.delete(key);
+    if (this.tiles.size > LRU_CAP) {
+      this.tiles.delete(this.tiles.keys().next().value!);
+    }
     return grid;
   }
 
@@ -113,7 +125,13 @@ export class TerrainSampler {
     const ty = Math.floor(yf);
     const grid = await this.loadTile(tx, ty);
     // -0.5: pixel centres sit half a pixel in from the tile edge.
-    return bilinearSample(grid, TILE_SIZE, TILE_SIZE, (xf - tx) * TILE_SIZE - 0.5, (yf - ty) * TILE_SIZE - 0.5);
+    return bilinearSample(
+      grid,
+      TILE_SIZE,
+      TILE_SIZE,
+      (xf - tx) * TILE_SIZE - 0.5,
+      (yf - ty) * TILE_SIZE - 0.5,
+    );
   }
 
   /** Prefetches all needed tiles in parallel, then samples synchronously. */

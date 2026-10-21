@@ -61,35 +61,97 @@ export interface BeamOptions {
   shouldCancel?: () => boolean;
 }
 
+/**
+ * Every expanded state lives here until the search ends — reachable through
+ * parent pointers for path reconstruction — so this is exactly the thing that
+ * grows into the hundreds of thousands on a long search. Flat typed arrays
+ * with capacity slack: integer fields at 4 (or 1) bytes instead of 8, nothing
+ * for the GC to scan, and the hot loop indexes them like the plain arrays
+ * they replaced. `n` is the live count; growStore doubles the capacity.
+ */
 interface StateStore {
-  node: number[];
-  dist: number[];
-  sq: number[];
+  n: number;
+  node: Int32Array;
+  dist: Float64Array;
+  sq: Float64Array;
   /** Sum of (course − target) diffs, for offset-corrected partial RMSE. */
-  diffSum: number[];
-  sampleCount: number[];
-  gain: number[];
-  loss: number[];
-  penaltyLen: number[];
+  diffSum: Float64Array;
+  sampleCount: Int32Array;
+  gain: Float64Array;
+  loss: Float64Array;
+  penaltyLen: Float64Array;
   /** Metres run along ground no downloaded GPS trace covers (see `traced`). */
-  untracedLen: number[];
-  repeatLen: number[];
+  untracedLen: Float64Array;
+  repeatLen: Float64Array;
   /** Farthest the path has been from its own root, metres (see confinement). */
-  reach: number[];
+  reach: Float64Array;
   /** The start node this path grew from; roots differ when starting anywhere. */
-  root: number[];
+  root: Int32Array;
   /** Bitmask of via points visited so far, in order. */
-  viaMask: number[];
+  viaMask: Int32Array;
   /**
    * Length-weighted sum of squared per-edge offset-corrected shape error;
    * sqrt(shapeSq / dist) is the beam's proxy for the final localShape RMS.
    */
-  shapeSq: number[];
-  turns: number[];
-  exitHead: number[];
-  parent: number[];
-  edge: number[];
-  dir: number[];
+  shapeSq: Float64Array;
+  turns: Float64Array;
+  exitHead: Float64Array;
+  parent: Int32Array;
+  edge: Int32Array;
+  dir: Int8Array;
+}
+
+function newStateStore(capacity: number): StateStore {
+  return {
+    n: 0,
+    node: new Int32Array(capacity),
+    dist: new Float64Array(capacity),
+    sq: new Float64Array(capacity),
+    diffSum: new Float64Array(capacity),
+    sampleCount: new Int32Array(capacity),
+    gain: new Float64Array(capacity),
+    loss: new Float64Array(capacity),
+    penaltyLen: new Float64Array(capacity),
+    untracedLen: new Float64Array(capacity),
+    repeatLen: new Float64Array(capacity),
+    reach: new Float64Array(capacity),
+    root: new Int32Array(capacity),
+    viaMask: new Int32Array(capacity),
+    shapeSq: new Float64Array(capacity),
+    turns: new Float64Array(capacity),
+    exitHead: new Float64Array(capacity),
+    parent: new Int32Array(capacity),
+    edge: new Int32Array(capacity),
+    dir: new Int8Array(capacity),
+  };
+}
+
+function growStore(s: StateStore): void {
+  const cap = s.node.length * 2;
+  const grow = <T extends Int8Array | Int32Array | Float64Array>(a: T): T => {
+    const next = new (a.constructor as new (n: number) => T)(cap);
+    next.set(a);
+    return next;
+  };
+  s.node = grow(s.node);
+  s.dist = grow(s.dist);
+  s.sq = grow(s.sq);
+  s.diffSum = grow(s.diffSum);
+  s.sampleCount = grow(s.sampleCount);
+  s.gain = grow(s.gain);
+  s.loss = grow(s.loss);
+  s.penaltyLen = grow(s.penaltyLen);
+  s.untracedLen = grow(s.untracedLen);
+  s.repeatLen = grow(s.repeatLen);
+  s.reach = grow(s.reach);
+  s.root = grow(s.root);
+  s.viaMask = grow(s.viaMask);
+  s.shapeSq = grow(s.shapeSq);
+  s.turns = grow(s.turns);
+  s.exitHead = grow(s.exitHead);
+  s.parent = grow(s.parent);
+  s.edge = grow(s.edge);
+  s.dir = grow(s.dir);
 }
 
 interface TargetPrefix {
@@ -331,27 +393,16 @@ export async function beamSearch(
   // with it — start-anywhere is already documented as the slow option.
   const width = Math.max(beamWidth, Math.min(STATES_PER_ROOT * roots.length, 10 * beamWidth));
 
-  const s: StateStore = {
-    node: [...roots],
-    dist: roots.map(() => 0),
-    sq: roots.map(() => 0),
-    diffSum: roots.map(() => 0),
-    sampleCount: roots.map(() => 0),
-    gain: roots.map(() => 0),
-    loss: roots.map(() => 0),
-    penaltyLen: roots.map(() => 0),
-    untracedLen: roots.map(() => 0),
-    repeatLen: roots.map(() => 0),
-    reach: roots.map(() => 0),
-    root: [...roots],
-    viaMask: roots.map(() => 0),
-    shapeSq: roots.map(() => 0),
-    turns: roots.map(() => 0),
-    exitHead: roots.map(() => Number.NaN),
-    parent: roots.map(() => -1),
-    edge: roots.map(() => -1),
-    dir: roots.map(() => 0),
-  };
+  const s = newStateStore(Math.max(4096, roots.length * 2));
+  for (const r of roots) {
+    const i = s.n++;
+    s.node[i] = r;
+    s.root[i] = r;
+    s.exitHead[i] = Number.NaN;
+    s.parent[i] = -1;
+    s.edge[i] = -1;
+    // Everything else starts at the typed arrays' own 0.
+  }
   const tp = targetPrefix(target, graph, elev0);
 
   const buckets: number[][] = Array.from({ length: totalBuckets }, () => []);
@@ -370,7 +421,10 @@ export async function beamSearch(
       const mean = s.diffSum[stateIdx]! / n;
       const rmse = Math.sqrt(Math.max(0, s.sq[stateIdx]! / n - mean * mean));
       const shape = Math.sqrt(s.shapeSq[stateIdx]! / Math.max(1, s.dist[stateIdx]!));
-      const bound = weights.rmse * rmse + weights.localShape * shape - 3;
+      // The slack must cover the most negative the other terms can go, which
+      // is the penalty bonuses — a function of the weight, not a constant
+      // (the UI allows penalty weights far past the default 30).
+      const bound = weights.rmse * rmse + weights.localShape * shape - weights.penalty * 0.1;
       if (bound > best[best.length - 1]!.score) return;
     }
     const path = reconstruct(s, stateIdx);
@@ -438,7 +492,9 @@ export async function beamSearch(
       if (chosen.has(si)) continue;
       // Via progress is part of a state's identity: a lineage that already
       // passed via 1 must not be deduped against one that has not.
-      const key = s.node[si]! * 16 + (s.viaMask[si]! & 15);
+      // Sized to the via count: a fixed 16 deduped lineages with different
+      // via progress together once a course had five or more vias.
+      const key = s.node[si]! * (fullViaMask + 1) + s.viaMask[si]!;
       const count = perNode.get(key) ?? 0;
       if (count >= perNodeCap) continue;
       perNode.set(key, count + 1);
@@ -531,30 +587,31 @@ export async function beamSearch(
           turns++;
         }
 
-        const idx = s.node.length;
-        s.node.push(nextNode);
-        s.dist.push(newDist);
-        s.sq.push(sq);
-        s.diffSum.push(s.diffSum[si]! + diffSum);
-        s.sampleCount.push(s.sampleCount[si]! + m - 1);
-        s.gain.push(gain);
-        s.loss.push(loss);
+        if (s.n === s.node.length) growStore(s);
+        const idx = s.n++;
+        s.node[idx] = nextNode;
+        s.dist[idx] = newDist;
+        s.sq[idx] = sq;
+        s.diffSum[idx] = s.diffSum[si]! + diffSum;
+        s.sampleCount[idx] = s.sampleCount[si]! + m - 1;
+        s.gain[idx] = gain;
+        s.loss[idx] = loss;
         const avoided = avoidEdges?.has(ei) ? AVOID_PENALTY : 0;
-        s.penaltyLen.push(s.penaltyLen[si]! + (e.penalty + avoided) * e.lengthM);
-        s.untracedLen.push(s.untracedLen[si]! + (1 - e.traced) * e.lengthM);
-        s.repeatLen.push(s.repeatLen[si]! + repeat);
+        s.penaltyLen[idx] = s.penaltyLen[si]! + (e.penalty + avoided) * e.lengthM;
+        s.untracedLen[idx] = s.untracedLen[si]! + (1 - e.traced) * e.lengthM;
+        s.repeatLen[idx] = s.repeatLen[si]! + repeat;
         const rootIdx = s.root[si]!;
         const dy = (graph.nodeLat[nextNode]! - graph.nodeLat[rootIdx]!) * 111_320;
         const dx = (graph.nodeLon[nextNode]! - graph.nodeLon[rootIdx]!) * mPerLon;
-        s.reach.push(Math.max(s.reach[si]!, Math.sqrt(dx * dx + dy * dy)));
-        s.root.push(rootIdx);
-        s.viaMask.push(viaMask);
-        s.shapeSq.push(shapeSq);
-        s.turns.push(turns);
-        s.exitHead.push(exitHeading(e, forward));
-        s.parent.push(si);
-        s.edge.push(ei);
-        s.dir.push(forward ? 1 : 0);
+        s.reach[idx] = Math.max(s.reach[si]!, Math.sqrt(dx * dx + dy * dy));
+        s.root[idx] = rootIdx;
+        s.viaMask[idx] = viaMask;
+        s.shapeSq[idx] = shapeSq;
+        s.turns[idx] = turns;
+        s.exitHead[idx] = exitHeading(e, forward);
+        s.parent[idx] = si;
+        s.edge[idx] = ei;
+        s.dir[idx] = forward ? 1 : 0;
 
         if (newDist >= minLen && (!endMask || endMask[nextNode]) && viaMask === fullViaMask) {
           complete(idx);

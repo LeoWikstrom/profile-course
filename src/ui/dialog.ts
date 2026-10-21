@@ -36,6 +36,23 @@ function ensure(): HTMLDivElement {
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeDialog();
   });
+  // aria-modal promises the dialog is all there is, so Tab must not leave it.
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const focusables = card.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      last.focus();
+      e.preventDefault();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      first.focus();
+      e.preventDefault();
+    }
+  });
   document.body.appendChild(overlay);
   return overlay;
 }

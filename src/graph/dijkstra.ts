@@ -67,7 +67,11 @@ export interface DijkstraResult {
 }
 
 /** Multi-source Dijkstra over edge lengths. */
-export function dijkstra(graph: Graph, sources: number[], options: DijkstraOptions = {}): DijkstraResult {
+export function dijkstra(
+  graph: Graph,
+  sources: number[],
+  options: DijkstraOptions = {},
+): DijkstraResult {
   const n = graph.nodeLat.length;
   const dist = new Float64Array(n).fill(Infinity);
   const viaEdge = new Int32Array(n).fill(-1);

@@ -86,6 +86,12 @@ export interface MapController {
   showEditWindow(points: LatLon[]): void;
   hideEditWindow(): void;
   drawCourse(segments: CourseSegment[], options?: { faded?: boolean }): void;
+  /**
+   * The live search preview: one translucent line, mutated in place — a tick
+   * arrives several times a second and must not rebuild the course layer.
+   * drawCourse and clearCourse take it down.
+   */
+  drawPreview(segments: CourseSegment[]): void;
   /** Km labels and running-direction arrows along ~25 m-spaced course points. */
   decorateCourse(points: { lat: number; lon: number }[]): void;
   clearCourse(): void;
@@ -175,6 +181,7 @@ export function createMap(
   });
 
   let courseLayer: L.LayerGroup | null = null;
+  let previewLine: L.Polyline | null = null;
   let pointMarker: L.Marker | null = null;
   let pointMarkerClass = '';
   let pointPill: L.Tooltip | null = null;
@@ -638,7 +645,25 @@ export function createMap(
       windowBox?.remove();
       windowBox = null;
     },
+    drawPreview(segments) {
+      const latlngs: [number, number][] = [];
+      for (const seg of segments) {
+        for (let i = 0; i < seg.lats.length; i++) latlngs.push([seg.lats[i]!, seg.lons[i]!]);
+      }
+      if (previewLine) {
+        previewLine.setLatLngs(latlngs);
+        return;
+      }
+      previewLine = L.polyline(latlngs, {
+        color: '#c63d80',
+        weight: 4,
+        opacity: 0.45,
+        interactive: false,
+      }).addTo(map);
+    },
     drawCourse(segments, options) {
+      previewLine?.remove();
+      previewLine = null;
       courseLayer?.remove();
       courseLayer = L.layerGroup();
       const opacity = options?.faded ? 0.45 : 0.9;
@@ -688,6 +713,8 @@ export function createMap(
       }
     },
     clearCourse() {
+      previewLine?.remove();
+      previewLine = null;
       courseLayer?.remove();
       courseLayer = null;
       windowBox?.remove();
