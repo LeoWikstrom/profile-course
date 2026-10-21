@@ -28,6 +28,8 @@ export function renderInteractiveChart(
   onCommit?: ((sampleIndex: number) => void) | null,
   width = 360,
   height = 140,
+  /** `faded` draws the course line translucent — a search's live preview. */
+  opts?: { faded?: boolean },
 ): ChartHandle {
   container.textContent = '';
 
@@ -55,12 +57,12 @@ export function renderInteractiveChart(
   const y = (v: number) => height - pad - ((v - min) / (max - min)) * (height - pad - padTop);
 
   const RACE_ONLY_COLOR = '#c63d80';
-  for (const { samples, color } of course
+  for (const { samples, color, opacity } of course
     ? [
-        { samples: target, color: '#9ca3af' },
-        { samples: course, color: COURSE_COLOR },
+        { samples: target, color: '#9ca3af', opacity: 1 },
+        { samples: course, color: COURSE_COLOR, opacity: opts?.faded ? 0.45 : 1 },
       ]
-    : [{ samples: target, color: RACE_ONLY_COLOR }]) {
+    : [{ samples: target, color: RACE_ONLY_COLOR, opacity: 1 }]) {
     const pts: string[] = [];
     for (let i = 0; i < samples.length; i++) {
       pts.push(`${x(i).toFixed(1)},${y(samples[i]!).toFixed(1)}`);
@@ -69,6 +71,7 @@ export function renderInteractiveChart(
     line.setAttribute('points', pts.join(' '));
     line.setAttribute('fill', 'none');
     line.setAttribute('stroke', color);
+    line.setAttribute('stroke-opacity', String(opacity));
     line.setAttribute('stroke-width', '1.5');
     svg.appendChild(line);
   }

@@ -3,7 +3,7 @@ import { parseGpx, type ParsedGpx } from './gpx/parse';
 import { SURFACE_PRESETS } from './search/score';
 import { haversineMeters } from './shared/geo';
 import { loadSession, requestPersistentStorage, saveSession } from './session';
-import type { CourseResult, MainToWorker, WorkerToMain } from './shared/messages';
+import type { CourseResult, CourseSegment, MainToWorker, WorkerToMain } from './shared/messages';
 import { createMap } from './ui/map';
 import { renderInteractiveChart } from './ui/profileChart';
 import { captureTops, playReorder, slideIn, slideOutRow } from './ui/animate';
@@ -132,8 +132,33 @@ let lastResult: { course: CourseResult; profile: TargetProfile } | null = null;
 let candidates: ({ course: CourseResult; profile: TargetProfile } | null)[] = [];
 /** How far the search behind each unfilled slot has got, 0–1. */
 let candidateProgress: number[] = [];
+/** Each running search's best-so-far, drawn faded when its tab is watched. */
+let candidatePreviews: ({ segments: CourseSegment[]; samples: Float32Array } | null)[] = [];
 let shownCandidate = 0;
 const courseTabs = document.getElementById('course-tabs') as HTMLElement;
+
+/** A searching tab's live view: the best candidate so far, see-through. */
+function showPreview(index: number): void {
+  const profile = activeProfile();
+  if (!profile) return;
+  const preview = candidatePreviews[index];
+  if (!preview) {
+    // Nothing streamed yet: just the race profile, until the first best lands.
+    renderInteractiveChart(targetChart, profile.samples, null, () => {});
+    return;
+  }
+  map.drawCourse(preview.segments, { faded: true });
+  renderInteractiveChart(
+    targetChart,
+    profile.samples,
+    preview.samples,
+    () => {},
+    null,
+    undefined,
+    undefined,
+    { faded: true },
+  );
+}
 
 function drawCourseTabs(): void {
   renderCourseTabs(
@@ -147,17 +172,32 @@ function drawCourseTabs(): void {
   );
 }
 
-/** Switch to one of the search's other courses. Edits belong to a course. */
+/**
+ * Switch to one of the search's other courses. Edits belong to a course. A
+ * tab whose search is still running can be watched: its best-so-far shows
+ * faded, and the real course replaces it, solid, when the run finishes.
+ */
 function showCandidate(index: number): void {
+  if (index === shownCandidate) return;
   const picked = candidates[index];
-  if (!picked || index === shownCandidate) return;
+  const searching = !picked && ((candidateProgress[index] ?? 0) > 0 || candidatePreviews[index]);
+  if (!picked && !searching) return;
   if (editingMode) exitEditing();
   shownCandidate = index;
-  lastResult = picked;
-  showResult(picked);
+  if (picked) {
+    lastResult = picked;
+    showResult(picked);
+    drawCourseTabs();
+    startHint.textContent = `Course ${index + 1} — mismatch ${picked.course.score.toFixed(1)}.`;
+    persistSession();
+    return;
+  }
+  // Not persisted: a preview is gone on reload, and the course may never land.
+  hideResult(resultEls);
+  map.clearCourse();
+  showPreview(index);
   drawCourseTabs();
-  startHint.textContent = `Course ${index + 1} — mismatch ${picked.course.score.toFixed(1)}.`;
-  persistSession();
+  startHint.textContent = `Course ${index + 1} is still being searched for…`;
 }
 
 renderShortcuts(document.getElementById('shortcuts-help') as HTMLElement);
@@ -1050,6 +1090,13 @@ cancelButton.addEventListener('click', () => {
     const ready = candidates.filter((c) => c !== null).length;
     candidates.length = ready;
     candidateProgress.length = ready;
+    candidatePreviews.length = ready;
+    // A cancelled run's preview tab has nothing behind it any more either.
+    if (!candidates[shownCandidate] && candidates[0]) {
+      shownCandidate = 0;
+      lastResult = candidates[0];
+      showResult(lastResult);
+    }
     drawCourseTabs();
   }
   searchDone();
@@ -1163,11 +1210,14 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
           : `${msg.stage} ${Math.round(msg.fraction * 100)} %`;
       break;
     case 'bestSoFar':
-      map.drawCourse(msg.segments, { faded: true });
+      candidatePreviews[msg.index] = { segments: msg.segments, samples: msg.samples };
+      // Only painted when that tab is what's on screen and still unfilled.
+      if (msg.index === shownCandidate && !candidates[msg.index]) showPreview(msg.index);
       break;
     case 'courses':
       candidates = Array.from({ length: msg.total }, () => null);
       candidateProgress = candidates.map(() => 0);
+      candidatePreviews = candidates.map(() => null);
       shownCandidate = 0;
       drawCourseTabs();
       break;
@@ -1180,6 +1230,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (profile) {
         candidates[msg.index] = { course: msg.course, profile };
         candidateProgress[msg.index] = 1;
+        candidatePreviews[msg.index] = null;
         // The first course to land is shown straight away; the rest wait in
         // their tabs so an arriving alternative cannot pull the map away.
         if (msg.index === shownCandidate) {
@@ -1195,6 +1246,14 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       // Close the tabs no course could be found for.
       candidates.length = Math.max(msg.ready, 1);
       candidateProgress.length = candidates.length;
+      candidatePreviews.length = candidates.length;
+      // Watching a preview whose run never delivered: fall back to course 1.
+      const shown = candidates[shownCandidate];
+      if (!shown && candidates[0]) {
+        shownCandidate = 0;
+        lastResult = candidates[0];
+        showResult(lastResult);
+      }
       drawCourseTabs();
       if (msg.ready > 1) {
         startHint.textContent = `${msg.ready} courses found — switch with the tabs at the top, or press 1–${msg.ready}.`;

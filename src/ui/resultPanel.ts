@@ -55,14 +55,25 @@ export function renderCourseTabs(
     const tab = el.children[i] as HTMLButtonElement;
     tab.setAttribute('aria-selected', String(i === selected));
     tab.tabIndex = i === selected ? 0 : -1;
-    tab.disabled = score === null;
+    // A tab whose search has started can be watched live; only one whose
+    // search has not yet begun (0 %) has nothing to show.
+    tab.disabled = score === null && fraction <= 0;
     if (score === null) {
-      const spinner = document.createElement('span');
-      spinner.className = 'tab-spinner';
-      spinner.setAttribute('aria-hidden', 'true');
-      tab.textContent = '';
-      tab.append(spinner, `${i + 1} · ${Math.round(fraction * 100)} %`);
-      tab.title = `Course ${i + 1} is still being searched for`;
+      // The spinner element is kept across progress ticks: recreating it
+      // restarted its animation every redraw, so it looked stuck at the top.
+      if (!tab.querySelector('.tab-spinner')) {
+        tab.textContent = '';
+        const spinner = document.createElement('span');
+        spinner.className = 'tab-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        tab.append(spinner, document.createElement('span'));
+      }
+      (tab.lastElementChild as HTMLElement).textContent =
+        `${i + 1} · ${Math.round(fraction * 100)} %`;
+      tab.title =
+        fraction > 0
+          ? `Course ${i + 1} is still being searched for — watch it live`
+          : `Course ${i + 1} is still being searched for`;
     } else {
       tab.textContent = `${i + 1} · ${score.toFixed(1)}`;
       tab.title = `Course ${i + 1}, mismatch ${score.toFixed(1)} — or press ${i + 1}`;

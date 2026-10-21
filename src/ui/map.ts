@@ -696,6 +696,8 @@ export function createMap(
       nodeLayer = null;
       pointMarker?.remove();
       pointMarker = null;
+      pointPill?.remove();
+      pointPill = null;
       hoverPoints = [];
       hoverDescribe = null;
       hideHover();

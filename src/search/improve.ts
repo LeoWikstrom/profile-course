@@ -23,6 +23,8 @@ export interface ImproveOptions {
   /** Reject window replacements that break constraints (e.g. via points). */
   validatePath?: (path: CoursePath) => boolean;
   shouldCancel?: () => boolean;
+  /** Overall progress 0..1, with the candidate currently being polished. */
+  onProgress?: (fraction: number, current: WalkCandidate) => void;
 }
 
 /** Above this share of shared edges, two courses are the same run out. */
@@ -78,6 +80,7 @@ export async function improveCandidates(
     weights = DEFAULT_WEIGHTS,
     validatePath,
     shouldCancel,
+    onProgress,
   } = options;
 
   const minLen = targetLengthM * 0.97;
@@ -92,18 +95,50 @@ export async function improveCandidates(
     return c.path.dirs[0] === 1 ? e.a : e.b;
   };
 
-  function scanOnce(start: WalkCandidate): WalkCandidate | null {
+  const cumOf = (path: CoursePath): number[] => {
+    const cum: number[] = [0];
+    for (const ei of path.edges) cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
+    return cum;
+  };
+
+  // Yen's answers depend only on the (static) graph, and the later passes
+  // rescan mostly unchanged windows — so repeats are answered from a cache
+  // instead of running the k-shortest-paths search again.
+  const altsCache = new Map<string, ReturnType<typeof kShortestPaths>>();
+  const altsFor = (
+    from: number,
+    to: number,
+    windowLen: number,
+  ): ReturnType<typeof kShortestPaths> => {
+    const key = `${from},${to},${Math.round(windowLen)}`;
+    let alts = altsCache.get(key);
+    if (!alts) {
+      alts = kShortestPaths(graph, from, to, k, windowLen * 1.6);
+      altsCache.set(key, alts);
+    }
+    return alts;
+  };
+
+  async function scanOnce(
+    start: WalkCandidate,
+    onWindow?: (fraction: number, current: WalkCandidate) => void,
+  ): Promise<WalkCandidate | null> {
     let current = start;
     let anyChange = false;
+    // The course only changes when a window is replaced; recomputing its
+    // nodes and cumulative lengths per window made every scan quadratic.
+    let nodes = pathNodes(graph, current.path, rootOf(current));
+    let cum = cumOf(current.path);
 
-    for (let windowStart = 0; ; windowStart += windowStepM) {
+    for (let windowStart = 0, wi = 0; ; windowStart += windowStepM, wi++) {
       if (shouldCancel?.()) break;
-      const nodes = pathNodes(graph, current.path, rootOf(current));
-      const cum: number[] = [0];
-      for (const ei of current.path.edges) {
-        cum.push(cum[cum.length - 1]! + graph.edges[ei]!.lengthM);
-      }
-      if (windowStart >= cum[cum.length - 1]! - 300) break;
+      const totalLen = cum[cum.length - 1]!;
+      if (windowStart >= totalLen - 300) break;
+      onWindow?.(windowStart / Math.max(1, totalLen), current);
+      // Let a cancel message reach the worker mid-scan — but not every
+      // window, or the timer clamp (4 ms past five chained timeouts) would
+      // cost more than it buys.
+      if ((wi & 7) === 7) await new Promise((resolve) => setTimeout(resolve, 0));
 
       let fromIdx = 0;
       while (fromIdx < nodes.length - 2 && cum[fromIdx]! < windowStart) fromIdx++;
@@ -112,7 +147,7 @@ export async function improveCandidates(
       const windowLen = cum[toIdx]! - cum[fromIdx]!;
       if (windowLen < 300 || windowLen > 1500 || nodes[fromIdx] === nodes[toIdx]) continue;
 
-      const alts = kShortestPaths(graph, nodes[fromIdx]!, nodes[toIdx]!, k, windowLen * 1.6);
+      const alts = altsFor(nodes[fromIdx]!, nodes[toIdx]!, windowLen);
       for (const alt of alts) {
         const newLen = current.course.lengthM - windowLen + alt.lengthM;
         if (newLen < minLen || newLen > maxLen) continue;
@@ -123,6 +158,8 @@ export async function improveCandidates(
         if (score < current.score) {
           current = { path: newPath, course, score };
           anyChange = true;
+          nodes = pathNodes(graph, current.path, rootOf(current));
+          cum = cumOf(current.path);
           break;
         }
       }
@@ -130,13 +167,15 @@ export async function improveCandidates(
     return anyChange ? current : null;
   }
 
-  for (let ci = 0; ci < Math.min(improved.length, maxCandidates); ci++) {
+  const n = Math.min(improved.length, maxCandidates);
+  for (let ci = 0; ci < n; ci++) {
     for (let pass = 0; pass < passes; pass++) {
       if (shouldCancel?.()) break;
-      const better = scanOnce(improved[ci]!);
+      const better = await scanOnce(improved[ci]!, (f, current) =>
+        onProgress?.((ci + (pass + f) / passes) / n, current),
+      );
       if (!better) break;
       improved[ci] = better;
-      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
   return improved.sort((a, b) => a.score - b.score);

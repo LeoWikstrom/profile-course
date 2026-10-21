@@ -372,6 +372,31 @@ subgroup). Each weight is a small number box synced to a slider (0–10 or 0–1
 accepts more and the slider then pegs — `collectWeights` still reads only the boxes, so the
 sliders are pure UI. The untracked row greys out with its checkbox (`reflectUseTraces`).
 
+**Live search preview** (Leo, 2026-10-21): while a search runs, its best candidate so far shows
+faded on the map and as a translucent line on the chart, turning solid when the course lands.
+The beam's `onProgress` gained a fourth argument, `leader` — the top-ranked *partial* path
+(`bucket[0]` after the rank sort, `reconstruct`ed per bucket; cheap, and strictly outside the
+expansion loop). The worker streams one `bestSoFar { index, segments, samples, score }` per run:
+a complete candidate always beats a partial (posted on improvement only, so nothing flickers
+between improvements), partials are time-throttled to one per 200 ms and carry
+`assembleCourse(...).samples` for the chart. Main stores previews per tab
+(`candidatePreviews`) and only paints the tab on screen; a spinner tab is clickable once its
+run has started (only true-0 % tabs stay disabled — they have no search behind them yet), and
+entering one shows the preview with the result panel hidden. `coursesDone` and Cancel fall back
+to course 1 if the watched preview's run never delivered. Previews are never persisted. The
+early preview jumps around as leads change — deliberate, it is honestly what the beam is
+considering. The improvement pass streams too (`improveCandidates`' `onProgress(fraction,
+current)`): each runner-up shows as it is being polished, `courseProgress` walks 0.9→1.0 and the
+"improving" stage 0.92→0.99 instead of sitting silent at 92 %. Two perf fixes went in with it
+(2026-10-21): the scan recomputes `pathNodes`/cumulative lengths only when a window was actually
+replaced (was once per window — quadratic in course length), and Yen's k-shortest-paths answers
+are cached per improve call keyed on `(from,to,⌊windowLen⌉)` — valid because they depend only on
+the static graph, and later passes rescan mostly unchanged windows. `scanOnce` now also yields
+every 8th window so Cancel can reach the worker mid-pass (not every window: the chained-timer
+clamp of 4 ms would cost more than it buys). Remaining known lever if improve is still slow:
+incremental scoring of a spliced window instead of `assembleCourse` over the whole course per
+alternative — a bigger, riskier refactor, not done.
+
 **Course actions are icon buttons on the map** (`#map-buttons`, right edge under the zoom
 control, 30 px like the zoom buttons, with the same 8 px step to the zoom control as between
 themselves — top 52 px as measured against the real phone, not the computed Leaflet height).

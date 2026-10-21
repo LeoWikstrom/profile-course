@@ -51,10 +51,15 @@ export interface BeamOptions {
   vias?: { nodes: Set<number>; edges?: Set<number>; dist: Float64Array; kmM: number | null }[];
   /** Half-width of the km window around each via's km, metres. */
   viaSlackM?: number;
-  onProgress?: (bucket: number, totalBuckets: number, best: WalkCandidate | null) => void;
+  /** `leader` is the top-ranked *partial* path, for a live search preview. */
+  onProgress?: (
+    bucket: number,
+    totalBuckets: number,
+    best: WalkCandidate | null,
+    leader?: CoursePath | null,
+  ) => void;
   shouldCancel?: () => boolean;
 }
-
 
 interface StateStore {
   node: number[];
@@ -561,7 +566,12 @@ export async function beamSearch(
     }
     buckets[b] = [];
 
-    onProgress?.(b + 1, totalBuckets, best[0] ?? null);
+    if (onProgress) {
+      // bucket[0] is the rank leader after the sort — the search's current
+      // best guess at the course, reconstructed for the live preview.
+      const leader = bucket.length > 0 ? reconstruct(s, bucket[0]!) : null;
+      onProgress(b + 1, totalBuckets, best[0] ?? null, leader);
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 

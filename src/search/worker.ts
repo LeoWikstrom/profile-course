@@ -185,7 +185,9 @@ async function ensurePrepared(
 
   validEnd = new Uint8Array(graph.nodeLat.length);
   for (let i = 0; i < validEnd.length; i++) {
-    if (haversineMeters(start.lat, start.lon, graph.nodeLat[i]!, graph.nodeLon[i]!) <= radiusMeters) {
+    if (
+      haversineMeters(start.lat, start.lon, graph.nodeLat[i]!, graph.nodeLon[i]!) <= radiusMeters
+    ) {
       validEnd[i] = 1;
     }
   }
@@ -427,13 +429,6 @@ async function search(
 
   post({ type: 'progress', stage: 'searching', fraction: 0.3, bestScore: null });
   post({ type: 'courses', total: MAX_COURSES });
-  let lastBestScore = Infinity;
-  const streamBest = (best: { path: CoursePath; score: number } | null) => {
-    if (best && best.score < lastBestScore) {
-      lastBestScore = best.score;
-      post({ type: 'bestSoFar', segments: pathSegments(g, best.path), score: best.score });
-    }
-  };
 
   // Each tab gets a search of its own, steered off the ground the courses
   // before it took — picking alternatives out of one search's runners-up gave
@@ -455,7 +450,41 @@ async function search(
             ),
           )
         : startNodes;
-    const onProgress = (done: number, total: number, best: WalkCandidate | null): void => {
+    // Every run streams its best-so-far as a live preview for its tab; the
+    // main thread only draws the tab on screen. A complete candidate beats
+    // any partial, and between its improvements there is nothing new to show.
+    let bestStreamed = Infinity;
+    let lastPreviewAt = 0;
+    const streamPreview = (best: WalkCandidate | null, leader: CoursePath | null): void => {
+      if (best) {
+        if (best.score >= bestStreamed) return;
+        bestStreamed = best.score;
+        post({
+          type: 'bestSoFar',
+          index: run,
+          segments: pathSegments(g, best.path),
+          samples: best.course.samples,
+          score: best.score,
+        });
+        return;
+      }
+      const now = performance.now();
+      if (!leader || now - lastPreviewAt < 200) return;
+      lastPreviewAt = now;
+      post({
+        type: 'bestSoFar',
+        index: run,
+        segments: pathSegments(g, leader),
+        samples: assembleCourse(g, leader).samples,
+        score: null,
+      });
+    };
+    const onProgress = (
+      done: number,
+      total: number,
+      best: WalkCandidate | null,
+      leader?: CoursePath | null,
+    ): void => {
       post({ type: 'courseProgress', index: run, fraction: (0.9 * done) / total });
       post({
         type: 'progress',
@@ -463,9 +492,7 @@ async function search(
         fraction: 0.3 + 0.6 * (done / total),
         bestScore: first ? (best?.score ?? null) : null,
       });
-      // Only the first run may paint the map: the later ones run under a
-      // course the user is already looking at.
-      if (first) streamBest(best);
+      streamPreview(best, leader ?? null);
     };
 
     const candidates =
@@ -509,14 +536,50 @@ async function search(
 
     const tSearch = performance.now();
     if (first) {
-      post({ type: 'progress', stage: 'improving', fraction: 0.92, bestScore: candidates[0]!.score });
+      post({
+        type: 'progress',
+        stage: 'improving',
+        fraction: 0.92,
+        bestScore: candidates[0]!.score,
+      });
     }
-    const improved = await improveCandidates(g, startNode, candidates, profile, targetLengthMeters, {
-      desiredMix: opts.desiredMix,
-      weights,
-      validatePath,
-      shouldCancel: () => cancelled,
-    });
+    const improved = await improveCandidates(
+      g,
+      startNode,
+      candidates,
+      profile,
+      targetLengthMeters,
+      {
+        desiredMix: opts.desiredMix,
+        weights,
+        validatePath,
+        shouldCancel: () => cancelled,
+        // The pass polishes each runner-up in turn; streaming the one in hand
+        // keeps the preview moving after "searching" reaches 90 %, and shows
+        // the runners-up being tried.
+        onProgress: (fraction, current) => {
+          post({ type: 'courseProgress', index: run, fraction: 0.9 + 0.1 * fraction });
+          if (first) {
+            post({
+              type: 'progress',
+              stage: 'improving',
+              fraction: 0.92 + 0.07 * fraction,
+              bestScore: current.score,
+            });
+          }
+          const now = performance.now();
+          if (now - lastPreviewAt < 200) return;
+          lastPreviewAt = now;
+          post({
+            type: 'bestSoFar',
+            index: run,
+            segments: pathSegments(g, current.path),
+            samples: current.course.samples,
+            score: current.score,
+          });
+        },
+      },
+    );
     if (cancelled) break;
     post({ type: 'courseProgress', index: run, fraction: 1 });
 
@@ -558,7 +621,10 @@ async function matchCourse(
   weightsIn: Record<string, number> | null,
 ): Promise<void> {
   // Graph area from the course's own bounding box.
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  let minLat = Infinity,
+    maxLat = -Infinity,
+    minLon = Infinity,
+    maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
     maxLat = Math.max(maxLat, lats[i]!);
@@ -566,8 +632,7 @@ async function matchCourse(
     maxLon = Math.max(maxLon, lons[i]!);
   }
   const center = { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 };
-  const halfDiag =
-    haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
+  const halfDiag = haversineMeters(minLat, minLon, maxLat, maxLon) / 2 + 500;
   // Matching follows the user's own route, which may well cross streets
   // informally — always build this graph with connectors enabled.
   await ensurePrepared(center, Math.min(halfDiag, MAX_GRAPH_RADIUS_M), 0, true);
@@ -633,7 +698,10 @@ async function ensureCurrentPath(
     }
   }
   if (graph) return { path: matchTrackToGraph(graph, lats, lons).path, exact: false };
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  let minLat = Infinity,
+    maxLat = -Infinity,
+    minLon = Infinity,
+    maxLon = -Infinity;
   for (let i = 0; i < lats.length; i++) {
     minLat = Math.min(minLat, lats[i]!);
     maxLat = Math.max(maxLat, lats[i]!);
@@ -790,7 +858,13 @@ async function improveMatched(
     [{ path: currentPath, course, score }],
     target,
     course.lengthM,
-    { desiredMix: desiredMix ?? MIX_ROAD, weights, maxCandidates: 1, passes: 6, shouldCancel: () => cancelled },
+    {
+      desiredMix: desiredMix ?? MIX_ROAD,
+      weights,
+      maxCandidates: 1,
+      passes: 6,
+      shouldCancel: () => cancelled,
+    },
   );
   post({
     type: 'matched',
@@ -818,18 +892,25 @@ onmessage = (event: MessageEvent<MainToWorker>) => {
         .catch((err: unknown) => post({ type: 'error', message: String(err) }));
       break;
     case 'search':
-      search(msg.start, msg.radiusMeters, msg.target, msg.targetLengthMeters, msg.seed, msg.algorithm, {
-        desiredMix: msg.desiredMix,
-        returnToStart: msg.returnToStart,
-        startAtPoint: msg.startAtPoint,
-        weights: msg.weights,
-        connectors: msg.connectors,
-        beamWidth: msg.beamWidth,
-        viaPoints: msg.viaPoints,
-        viaToleranceKm: msg.viaToleranceKm,
-      }).catch(
-        (err: unknown) =>
-          post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
+      search(
+        msg.start,
+        msg.radiusMeters,
+        msg.target,
+        msg.targetLengthMeters,
+        msg.seed,
+        msg.algorithm,
+        {
+          desiredMix: msg.desiredMix,
+          returnToStart: msg.returnToStart,
+          startAtPoint: msg.startAtPoint,
+          weights: msg.weights,
+          connectors: msg.connectors,
+          beamWidth: msg.beamWidth,
+          viaPoints: msg.viaPoints,
+          viaToleranceKm: msg.viaToleranceKm,
+        },
+      ).catch((err: unknown) =>
+        post({ type: 'error', message: err instanceof Error ? err.message : String(err) }),
       );
       break;
     case 'downloadArea':

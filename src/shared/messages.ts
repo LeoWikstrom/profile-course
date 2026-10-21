@@ -193,7 +193,18 @@ export type WorkerToMain =
   | { type: 'areas'; areas: AreaInfo[] }
   | { type: 'traces'; traces: TraceInfo[] }
   | { type: 'progress'; stage: string; fraction: number; bestScore: number | null }
-  | { type: 'bestSoFar'; segments: CourseSegment[]; score: number }
+  /**
+   * The search's best candidate so far — a live preview for the tab at
+   * `index`. `score` is null while it is still a partial path rather than a
+   * complete course.
+   */
+  | {
+      type: 'bestSoFar';
+      index: number;
+      segments: CourseSegment[];
+      samples: Float32Array;
+      score: number | null;
+    }
   /**
    * Courses arrive one at a time: `courses` opens that many tabs, each filled
    * by a `course` of its own search, and `coursesDone` closes any the search
