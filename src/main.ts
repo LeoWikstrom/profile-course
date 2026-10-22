@@ -17,6 +17,7 @@ import { hideResult, renderCourseTabs, renderResult, type ResultElements } from 
 import { initSheet } from './ui/sheet';
 import { closeDialog, dialogOpen, openDialog } from './ui/dialog';
 import { initDrawProfile } from './ui/drawProfile';
+import { decodeLink, encodeLink, linkStateToParams } from './ui/linkCodec';
 import { manualContent } from './ui/manual';
 import { renderShortcuts, shortcutsContent } from './ui/shortcuts';
 import { guardSlidersAgainstScroll } from './ui/sliderGuard';
@@ -1037,7 +1038,15 @@ function activeProfile(): TargetProfile | null {
  * `lat` still applies whatever it names and resets nothing.
  */
 function readUrlState(): void {
-  const params = new URLSearchParams(location.hash.slice(1));
+  let params = new URLSearchParams(location.hash.slice(1));
+  // A packed link (#c=…) unfolds into the plain params, so there is a single
+  // parsing path whichever form the link arrived in.
+  const packed = params.get('c');
+  if (packed) {
+    const state = decodeLink(packed);
+    if (!state) return;
+    params = new URLSearchParams(linkStateToParams(state));
+  }
   const complete = params.has('lat');
   const get = (key: string, def: string): string | null =>
     params.get(key) ?? (complete ? def : null);
@@ -1131,18 +1140,49 @@ function writeUrlState(): void {
   put('tr', useTraces.checked ? '1' : '0', '0');
   put('alg', algorithmSelect.value === 'walk' ? 'walk' : 'beam', 'beam');
   put('vt', String(Number(viaToleranceInput.value) || 0.3), viaToleranceInput.defaultValue);
-  const w = [...WEIGHT_FIELDS, 'untracked'].flatMap((f) => {
+  const weightDiffs = [...WEIGHT_FIELDS, 'untracked'].flatMap((f) => {
     const box = document.getElementById(`w-${f}`) as HTMLInputElement;
     const v = Number(box.value);
     // v, not box.value: an emptied box scores as 0 and must travel as 0.
-    return Number.isFinite(v) && v !== Number(box.defaultValue) ? [`${f}:${v}`] : [];
+    return Number.isFinite(v) && v !== Number(box.defaultValue) ? [{ name: f, value: v }] : [];
   });
-  if (w.length > 0) parts.push(`w=${w.join(',')}`);
+  if (weightDiffs.length > 0) {
+    parts.push(`w=${weightDiffs.map((w) => `${w.name}:${w.value}`).join(',')}`);
+  }
   if (viaPoints.length > 0) {
     const via = viaPoints.map((v) => `${v.lat.toFixed(5)},${v.lon.toFixed(5)},${v.km ?? ''}`);
     parts.push(`via=${via.join(';')}`);
   }
-  history.replaceState(null, '', `#${parts.join('&')}`);
+  // A plain hash reads at a glance, but edited weights and via points sprawl,
+  // so a long one is packed instead (#c=…). The threshold keeps an everyday
+  // link readable: packing would shave ~10 chars off even a minimal hash, and
+  // that is not worth the gibberish.
+  const plain = parts.join('&');
+  const packed = `c=${encodeLink({
+    lat: start.lat,
+    lon: start.lon,
+    radiusKm: Number(radiusSlider.value),
+    distanceKm: distanceInput.value ? Number(distanceInput.value) : null,
+    fromKm: Math.max(0, Number(rangeFrom.value) || 0),
+    toKm: rangeTo.value ? Number(rangeTo.value) : null,
+    mix: (SURFACE_PRESETS[surfaceSelect.value] ? surfaceSelect.value : 'road') as
+      | 'road'
+      | 'gravel'
+      | 'trail'
+      | 'any',
+    algorithm: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
+    returnToStart: returnToggle.checked,
+    startAnywhere: startAnywhereToggle.checked,
+    connectors: connectorsToggle.checked,
+    useTraces: useTraces.checked,
+    seed,
+    beamWidth: Number(beamWidthInput.value) || 200,
+    viaToleranceKm: Number(viaToleranceInput.value) || 0.3,
+    weights: weightDiffs,
+    vias: viaPoints,
+  })}`;
+  const usePlain = plain.length <= 100 || plain.length <= packed.length;
+  history.replaceState(null, '', `#${usePlain ? plain : packed}`);
 }
 
 function startSearch(): void {

@@ -122,8 +122,9 @@ const SECTIONS: [heading: string, ...paragraphs: string[]][] = [
     'Sharing and persistence',
     'Copy link (🔗) encodes everything that decides the result into the address bar: ' +
       'the start, zone, distance and race window, surface, seed, search effort, all the ' +
-      'weights, via points and the advanced toggles. Opening the link runs the same ' +
-      'search and finds the same first course — with three caveats.',
+      'weights, via points and the advanced toggles. A simple link spells its settings ' +
+      'out readably; one with many edits is packed into a short code instead. Opening ' +
+      'the link runs the same search and finds the same first course — with three caveats.',
     'The race itself is not in the link: whoever opens it must load the same GPX (or ' +
       'drawn profile) first. The map data must match too — searches run on the ' +
       'network your device has downloaded or cached, and OpenStreetMap itself changes ' +

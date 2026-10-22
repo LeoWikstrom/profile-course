@@ -120,8 +120,13 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
       that carries `lat` (every shared link does) reads absence as the default, overriding the
       receiver's stored settings (2026-10-22). The hash is joined by hand, not by
       URLSearchParams.toString, which would percent-escape the , : ; in the via and weight
-      lists that a fragment allows as-is. Reproducibility still assumes the same GPX and the
-      same map/trace data on the opening device; the manual's Sharing section says so.
+      lists that a fragment allows as-is. Past 100 chars (edited weights and vias sprawl) the
+      plain form gives way to `#c=<base64url>` — a versioned binary pack (`src/ui/linkCodec.ts`,
+      round-trip tests in test/linkCodec.test.ts) that decodes back into the plain params so
+      the reader has one parsing path; below it, plain stays, because packing would shave only
+      ~10 chars off a minimal hash and Leo wants simple links readable. Reproducibility still
+      assumes the same GPX and the same map/trace data on the opening device; the manual's
+      Sharing section says so.
 - [ ] **Pre-built area graphs** (prioritised by Leo over Phase 5 — public Overpass servers
       proved unreliable even at 2 km): download/store an area once, search offline from it.
 - [x] **Phase 5 (minus deploy)**: cancel button, offline-aware errors, PWA shell (manifest,
