@@ -61,7 +61,17 @@ export interface FetchNetworkOptions {
   onBytes?: (bytes: number, endpoint: number) => void;
   /** Rounds over all endpoints before giving up (default 2). */
   rounds?: number;
+  /**
+   * How long to wait for response headers (default 25 s). Overpass computes
+   * the whole result before sending headers, so a deliberate area download
+   * should allow up to the query's own [timeout:180].
+   */
+  headerTimeoutMs?: number;
 }
+
+const HEADER_TIMEOUT_MS = 25_000;
+/** Abort the body read only when the stream stalls, never on total time. */
+const BODY_STALL_MS = 30_000;
 
 /** Keep only ways with at least one node inside the circle (plus their nodes). */
 export function filterByRadius(
@@ -102,27 +112,41 @@ export function filterByRadius(
 
 async function readWithProgress(
   res: Response,
+  controller: AbortController,
   onBytes: ((bytes: number, endpoint: number) => void) | undefined,
   endpoint: number,
 ): Promise<OverpassResponse> {
-  if (!res.body || !onBytes) return (await res.json()) as OverpassResponse;
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.byteLength;
-    onBytes(received, endpoint);
+  if (!res.body) return (await res.json()) as OverpassResponse;
+  // A big area on a slow link can legitimately stream for many minutes, so
+  // the timer resets on every chunk: only a stalled stream is abandoned.
+  const stall = (): void =>
+    controller.abort(
+      new Error(`Overpass response stalled (no data for ${BODY_STALL_MS / 1000} s)`),
+    );
+  let timer = setTimeout(stall, BODY_STALL_MS);
+  try {
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      clearTimeout(timer);
+      timer = setTimeout(stall, BODY_STALL_MS);
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      onBytes?.(received, endpoint);
+    }
+    const all = new Uint8Array(received);
+    let offset = 0;
+    for (const c of chunks) {
+      all.set(c, offset);
+      offset += c.byteLength;
+    }
+    return JSON.parse(new TextDecoder().decode(all)) as OverpassResponse;
+  } finally {
+    clearTimeout(timer);
   }
-  const all = new Uint8Array(received);
-  let offset = 0;
-  for (const c of chunks) {
-    all.set(c, offset);
-    offset += c.byteLength;
-  }
-  return JSON.parse(new TextDecoder().decode(all)) as OverpassResponse;
 }
 
 export async function fetchNetwork(
@@ -154,15 +178,27 @@ export async function fetchNetwork(
       try {
         const controller = new AbortController();
         // Fast-fail if no response headers arrive; dead mirrors otherwise
-        // stall the whole search.
-        let timer = setTimeout(() => controller.abort(), 25_000);
-        const res = await fetchFn(ENDPOINTS[i]!, {
-          method: 'POST',
-          body: `data=${encodeURIComponent(query)}`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
+        // stall the whole search. Overpass computes the full result before
+        // sending headers, so callers may widen this for heavy queries.
+        const headerTimeout = options.headerTimeoutMs ?? HEADER_TIMEOUT_MS;
+        const timer = setTimeout(
+          () =>
+            controller.abort(
+              new Error(`Overpass sent no response headers within ${headerTimeout / 1000} s`),
+            ),
+          headerTimeout,
+        );
+        let res;
+        try {
+          res = await fetchFn(ENDPOINTS[i]!, {
+            method: 'POST',
+            body: `data=${encodeURIComponent(query)}`,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
         if (!res.ok) {
           const after = Number(res.headers.get('retry-after'));
           if (Number.isFinite(after) && after > 0) {
@@ -170,9 +206,7 @@ export async function fetchNetwork(
           }
           throw new Error(`Overpass ${ENDPOINTS[i]} returned ${res.status}`);
         }
-        timer = setTimeout(() => controller.abort(), 180_000);
-        const json = await readWithProgress(res, options.onBytes, i);
-        clearTimeout(timer);
+        const json = await readWithProgress(res, controller, options.onBytes, i);
         if (!Array.isArray(json.elements)) {
           throw new Error(`Overpass ${ENDPOINTS[i]} returned no elements`);
         }

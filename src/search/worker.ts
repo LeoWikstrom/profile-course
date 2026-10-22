@@ -83,6 +83,9 @@ async function downloadArea(center: LatLon, radiusMeters: number): Promise<void>
   let lastPosted = 0;
   const response = await fetchNetwork(center, radiusMeters, {
     rounds: 4,
+    // A deliberate download may wait as long as the query's own [timeout:180];
+    // a big area takes the server that long to compute before headers arrive.
+    headerTimeoutMs: 180_000,
     onBytes: (bytes, endpoint) => {
       if (bytes - lastPosted < 256 * 1024) return;
       lastPosted = bytes;
