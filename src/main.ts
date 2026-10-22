@@ -1030,41 +1030,69 @@ function activeProfile(): TargetProfile | null {
   return sliceProfile(fullProfile, fromM, toM);
 }
 
+/**
+ * A shared link always carries the start, and is then complete: every setting
+ * it leaves out is at its default, so the hash stays short without losing the
+ * guarantee that it decides the whole result. A hand-written fragment without
+ * `lat` still applies whatever it names and resets nothing.
+ */
 function readUrlState(): void {
   const params = new URLSearchParams(location.hash.slice(1));
+  const complete = params.has('lat');
+  const get = (key: string, def: string): string | null =>
+    params.get(key) ?? (complete ? def : null);
+
   const lat = Number(params.get('lat'));
   const lon = Number(params.get('lon'));
-  if (Number.isFinite(lat) && Number.isFinite(lon) && params.has('lat')) {
+  if (complete && Number.isFinite(lat) && Number.isFinite(lon)) {
     map.setStart({ lat, lon });
   }
-  if (params.has('r')) radiusSlider.value = params.get('r')!;
+  const r = get('r', radiusSlider.defaultValue);
+  if (r !== null) radiusSlider.value = r;
   if (params.has('d')) distanceInput.value = params.get('d')!;
   if (params.has('from')) rangeFrom.value = params.get('from')!;
   if (params.has('to')) rangeTo.value = params.get('to')!;
-  if (params.has('mix')) surfaceSelect.value = params.get('mix')!;
-  if (params.has('seed')) seed = Number(params.get('seed')) || 1;
-  if (params.has('rts')) returnToggle.checked = params.get('rts') === '1';
-  if (params.has('sa')) startAnywhereToggle.checked = params.get('sa') === '1';
-  if (params.has('conn')) connectorsToggle.checked = params.get('conn') === '1';
-  if (params.has('tr')) {
-    useTraces.checked = params.get('tr') === '1';
-    reflectUseTraces();
+  const mix = get('mix', 'road');
+  if (mix !== null) surfaceSelect.value = mix;
+  const sd = get('seed', '1');
+  if (sd !== null) {
+    seed = Number(sd) || 1;
+    // Find course re-reads the box, so the box must agree with the link.
+    seedInput.value = String(seed);
   }
-  if (params.has('alg')) algorithmSelect.value = params.get('alg') === 'walk' ? 'walk' : 'beam';
-  if (Number(params.get('b')) > 0) beamWidthInput.value = params.get('b')!;
-  if (Number(params.get('vt')) > 0) viaToleranceInput.value = params.get('vt')!;
-  const w = params.get('w');
-  if (w) {
-    const vals = w.split(',');
-    [...WEIGHT_FIELDS, 'untracked'].forEach((f, i) => {
-      if (!(Number(vals[i]) >= 0)) return;
-      (document.getElementById(`w-${f}`) as HTMLInputElement).value = vals[i]!;
-      (document.getElementById(`ws-${f}`) as HTMLInputElement).value = vals[i]!;
-    });
+  const flag = (key: string, el: HTMLInputElement): void => {
+    const v = get(key, '0');
+    if (v !== null) el.checked = v === '1';
+  };
+  flag('rts', returnToggle);
+  flag('sa', startAnywhereToggle);
+  flag('conn', connectorsToggle);
+  flag('tr', useTraces);
+  reflectUseTraces();
+  const alg = get('alg', 'beam');
+  if (alg !== null) algorithmSelect.value = alg === 'walk' ? 'walk' : 'beam';
+  const b = get('b', beamWidthInput.defaultValue);
+  if (b !== null && Number(b) > 0) beamWidthInput.value = b;
+  const vt = get('vt', viaToleranceInput.defaultValue);
+  if (vt !== null && Number(vt) > 0) viaToleranceInput.value = vt;
+  const w = get('w', '');
+  if (w !== null) {
+    const given = new Map<string, string>();
+    for (const pair of w.split(',')) {
+      const [name, val] = pair.split(':');
+      if (name && val && Number.isFinite(Number(val))) given.set(name, val);
+    }
+    for (const f of [...WEIGHT_FIELDS, 'untracked']) {
+      const box = document.getElementById(`w-${f}`) as HTMLInputElement;
+      const v = given.get(f) ?? box.defaultValue;
+      box.value = v;
+      (document.getElementById(`ws-${f}`) as HTMLInputElement).value = v;
+    }
   }
-  if (params.has('via')) {
+  const via = get('via', '');
+  if (via !== null) {
     viaPoints = [];
-    for (const part of params.get('via')!.split(';')) {
+    for (const part of via.split(';')) {
       const [latS, lonS, kmS] = part.split(',');
       const vLat = Number(latS);
       const vLon = Number(lonS);
@@ -1080,34 +1108,41 @@ function readUrlState(): void {
 function writeUrlState(): void {
   const start = map.getStart();
   if (!start) return;
-  // Everything that decides the result goes in, defaults included: the
+  // Everything that decides the result is represented: what differs from its
+  // default is written, and readUrlState reads absence as the default — the
   // receiver's own stored settings may differ, and a shared link promises the
-  // same course — given the same GPX and the same map data (see the manual).
-  const params = new URLSearchParams({
-    lat: start.lat.toFixed(5),
-    lon: start.lon.toFixed(5),
-    r: radiusSlider.value,
-    mix: surfaceSelect.value,
-    seed: String(seed),
-    b: String(Number(beamWidthInput.value) || 200),
-    rts: returnToggle.checked ? '1' : '0',
-    sa: startAnywhereToggle.checked ? '1' : '0',
-    conn: connectorsToggle.checked ? '1' : '0',
-    tr: useTraces.checked ? '1' : '0',
-    alg: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
-    vt: viaToleranceInput.value || '0.3',
-    w: [...WEIGHT_FIELDS.map((f) => (document.getElementById(`w-${f}`) as HTMLInputElement).value), untrackedWeight.value].join(','),
+  // same course given the same GPX and map data (see the manual). The hash is
+  // joined by hand because URLSearchParams.toString would percent-escape the
+  // , : ; in the via and weight lists, which a fragment allows as they are.
+  const parts = [`lat=${start.lat.toFixed(5)}`, `lon=${start.lon.toFixed(5)}`];
+  const put = (key: string, value: string, def: string): void => {
+    if (value !== def) parts.push(`${key}=${value}`);
+  };
+  put('r', radiusSlider.value, radiusSlider.defaultValue);
+  if (distanceInput.value) parts.push(`d=${distanceInput.value}`);
+  if (Number(rangeFrom.value) > 0) parts.push(`from=${rangeFrom.value}`);
+  if (rangeTo.value) parts.push(`to=${rangeTo.value}`);
+  put('mix', surfaceSelect.value, 'road');
+  put('seed', String(seed), '1');
+  put('b', String(Number(beamWidthInput.value) || 200), beamWidthInput.defaultValue);
+  put('rts', returnToggle.checked ? '1' : '0', '0');
+  put('sa', startAnywhereToggle.checked ? '1' : '0', '0');
+  put('conn', connectorsToggle.checked ? '1' : '0', '0');
+  put('tr', useTraces.checked ? '1' : '0', '0');
+  put('alg', algorithmSelect.value === 'walk' ? 'walk' : 'beam', 'beam');
+  put('vt', String(Number(viaToleranceInput.value) || 0.3), viaToleranceInput.defaultValue);
+  const w = [...WEIGHT_FIELDS, 'untracked'].flatMap((f) => {
+    const box = document.getElementById(`w-${f}`) as HTMLInputElement;
+    const v = Number(box.value);
+    // v, not box.value: an emptied box scores as 0 and must travel as 0.
+    return Number.isFinite(v) && v !== Number(box.defaultValue) ? [`${f}:${v}`] : [];
   });
-  if (distanceInput.value) params.set('d', distanceInput.value);
-  if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
-  if (rangeTo.value) params.set('to', rangeTo.value);
+  if (w.length > 0) parts.push(`w=${w.join(',')}`);
   if (viaPoints.length > 0) {
-    params.set(
-      'via',
-      viaPoints.map((v) => `${v.lat.toFixed(5)},${v.lon.toFixed(5)},${v.km ?? ''}`).join(';'),
-    );
+    const via = viaPoints.map((v) => `${v.lat.toFixed(5)},${v.lon.toFixed(5)},${v.km ?? ''}`);
+    parts.push(`via=${via.join(';')}`);
   }
-  history.replaceState(null, '', `#${params.toString()}`);
+  history.replaceState(null, '', `#${parts.join('&')}`);
 }
 
 function startSearch(): void {
@@ -2031,6 +2066,8 @@ async function boot(): Promise<void> {
   if (session) {
     gpxLabel = session.gpxLabel;
     seed = session.settings.seed || 1;
+    // Find course re-reads the box, which would otherwise undo the restore.
+    seedInput.value = String(seed);
     if (session.settings.radiusKm) radiusSlider.value = session.settings.radiusKm;
     if (session.settings.distanceKm) distanceInput.value = session.settings.distanceKm;
     if (session.settings.rangeFromKm) rangeFrom.value = session.settings.rangeFromKm;
