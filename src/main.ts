@@ -1044,6 +1044,7 @@ function readUrlState(): void {
   if (params.has('seed')) seed = Number(params.get('seed')) || 1;
   if (params.has('rts')) returnToggle.checked = params.get('rts') === '1';
   if (params.has('sa')) startAnywhereToggle.checked = params.get('sa') === '1';
+  if (Number(params.get('b')) > 0) beamWidthInput.value = params.get('b')!;
   radiusSlider.dispatchEvent(new Event('input'));
 }
 
@@ -1056,6 +1057,10 @@ function writeUrlState(): void {
     r: radiusSlider.value,
     mix: surfaceSelect.value,
     seed: String(seed),
+    // Effort changes the result, not just the speed: the beam keeps a
+    // different set of states. A shared link must carry it — even at the
+    // default — or the receiver's own stored effort yields another course.
+    b: String(Number(beamWidthInput.value) || 200),
   });
   if (distanceInput.value) params.set('d', distanceInput.value);
   if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
