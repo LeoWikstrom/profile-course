@@ -114,7 +114,11 @@ screen edge, and a spacer inside gives the hidden part room to scroll.
 - [x] **Phase 4 – Surface & options**: surface presets (road/gravel/trail/any), safety
       penalties/bonuses from tags (sidewalk, maxspeed, cycleway, foot=designated, lit),
       return-to-start (Dijkstra-pruned), distance override, km range, seed/Try another,
-      shareable URL hash.
+      shareable URL hash. The hash carries *everything that decides the result* — weights,
+      vias + tolerance, effort, connectors, algorithm, traces checkbox included, defaults and
+      all, since the receiver's stored settings may differ (2026-10-22). Reproducibility still
+      assumes the same GPX and the same map/trace data on the opening device; the manual's
+      Sharing section says so.
 - [ ] **Pre-built area graphs** (prioritised by Leo over Phase 5 — public Overpass servers
       proved unreliable even at 2 km): download/store an area once, search offline from it.
 - [x] **Phase 5 (minus deploy)**: cancel button, offline-aware errors, PWA shell (manifest,
@@ -438,6 +442,10 @@ first. Download = fetch inside the dialog (mirrored to the Path network subsecti
 `profile-course.skipAreaPrompt`, global; ✕/Esc/backdrop = suppressed for that start point only
 (`areaPromptDismissedFor`, not persisted) and the search goes ahead — unless a download is
 running, which a ✕ leaves running. `openDialog` gained an optional `onClose` fired on any close.
+Ticking "unrun ground" with no trace download covering the start gets the same treatment
+(2026-10-22): a dialog offers the traces download (radius select mirrored to the subsection,
+"Don't show again" = `profile-course.skipTracesPrompt`); ✕ just closes — the tick stays, there
+is no search to go ahead with, and the subsection's button carries the progress.
 
 **Live search preview** (Leo, 2026-10-21): while a search runs, its best candidate so far shows
 faded on the map and as a translucent line on the chart, turning solid when the course lands.

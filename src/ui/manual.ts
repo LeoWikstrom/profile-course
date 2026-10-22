@@ -120,11 +120,19 @@ const SECTIONS: [heading: string, ...paragraphs: string[]][] = [
   ],
   [
     'Sharing and persistence',
-    'Copy link (🔗) encodes the start, settings and seed into the address bar. Anyone ' +
-      'opening it runs the same search and gets the same first course — but the link ' +
-      'does not carry which tab was selected or any hand edits made after the search. ' +
-      'Everything you do is also saved on the device: closing or reloading the tab ' +
-      'brings back the race, the settings, every course tab and your edits.',
+    'Copy link (🔗) encodes everything that decides the result into the address bar: ' +
+      'the start, zone, distance and race window, surface, seed, search effort, all the ' +
+      'weights, via points and the advanced toggles. Opening the link runs the same ' +
+      'search and finds the same first course — with three caveats.',
+    'The race itself is not in the link: whoever opens it must load the same GPX (or ' +
+      'drawn profile) first. The map data must match too — searches run on the ' +
+      'network your device has downloaded or cached, and OpenStreetMap itself changes ' +
+      'over time, so an old link may find a slightly different course on newer data. ' +
+      'And GPS trace downloads are per device, so with the unrun-ground weight on, the ' +
+      'result also depends on which traces the opening device holds.',
+    'The link does not carry which tab was selected or any hand edits made after the ' +
+      'search. Everything you do is also saved on the device: closing or reloading the ' +
+      'tab brings back the race, the settings, every course tab and your edits.',
   ],
 ];
 

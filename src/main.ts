@@ -125,6 +125,7 @@ const useTraces = document.getElementById('use-traces') as HTMLInputElement;
 const untrackedWeight = document.getElementById('w-untracked') as HTMLInputElement;
 const rangeLabel = document.getElementById('range-label') as HTMLOutputElement;
 const beamWidthInput = document.getElementById('beam-width') as HTMLInputElement;
+const viaToleranceInput = document.getElementById('via-tolerance') as HTMLInputElement;
 
 let fullProfile: TargetProfile | null = null;
 let pendingGpx: ParsedGpx | null = null;
@@ -1044,29 +1045,68 @@ function readUrlState(): void {
   if (params.has('seed')) seed = Number(params.get('seed')) || 1;
   if (params.has('rts')) returnToggle.checked = params.get('rts') === '1';
   if (params.has('sa')) startAnywhereToggle.checked = params.get('sa') === '1';
+  if (params.has('conn')) connectorsToggle.checked = params.get('conn') === '1';
+  if (params.has('tr')) {
+    useTraces.checked = params.get('tr') === '1';
+    reflectUseTraces();
+  }
+  if (params.has('alg')) algorithmSelect.value = params.get('alg') === 'walk' ? 'walk' : 'beam';
   if (Number(params.get('b')) > 0) beamWidthInput.value = params.get('b')!;
+  if (Number(params.get('vt')) > 0) viaToleranceInput.value = params.get('vt')!;
+  const w = params.get('w');
+  if (w) {
+    const vals = w.split(',');
+    [...WEIGHT_FIELDS, 'untracked'].forEach((f, i) => {
+      if (!(Number(vals[i]) >= 0)) return;
+      (document.getElementById(`w-${f}`) as HTMLInputElement).value = vals[i]!;
+      (document.getElementById(`ws-${f}`) as HTMLInputElement).value = vals[i]!;
+    });
+  }
+  if (params.has('via')) {
+    viaPoints = [];
+    for (const part of params.get('via')!.split(';')) {
+      const [latS, lonS, kmS] = part.split(',');
+      const vLat = Number(latS);
+      const vLon = Number(lonS);
+      if (!part || !Number.isFinite(vLat) || !Number.isFinite(vLon)) continue;
+      // An unpinned via travels as an empty km, which Number() would read as 0.
+      const km = kmS ? Number(kmS) : NaN;
+      viaPoints.push({ lat: vLat, lon: vLon, km: Number.isFinite(km) ? km : null });
+    }
+  }
   radiusSlider.dispatchEvent(new Event('input'));
 }
 
 function writeUrlState(): void {
   const start = map.getStart();
   if (!start) return;
+  // Everything that decides the result goes in, defaults included: the
+  // receiver's own stored settings may differ, and a shared link promises the
+  // same course — given the same GPX and the same map data (see the manual).
   const params = new URLSearchParams({
     lat: start.lat.toFixed(5),
     lon: start.lon.toFixed(5),
     r: radiusSlider.value,
     mix: surfaceSelect.value,
     seed: String(seed),
-    // Effort changes the result, not just the speed: the beam keeps a
-    // different set of states. A shared link must carry it — even at the
-    // default — or the receiver's own stored effort yields another course.
     b: String(Number(beamWidthInput.value) || 200),
+    rts: returnToggle.checked ? '1' : '0',
+    sa: startAnywhereToggle.checked ? '1' : '0',
+    conn: connectorsToggle.checked ? '1' : '0',
+    tr: useTraces.checked ? '1' : '0',
+    alg: algorithmSelect.value === 'walk' ? 'walk' : 'beam',
+    vt: viaToleranceInput.value || '0.3',
+    w: [...WEIGHT_FIELDS.map((f) => (document.getElementById(`w-${f}`) as HTMLInputElement).value), untrackedWeight.value].join(','),
   });
   if (distanceInput.value) params.set('d', distanceInput.value);
   if (Number(rangeFrom.value) > 0) params.set('from', rangeFrom.value);
   if (rangeTo.value) params.set('to', rangeTo.value);
-  if (returnToggle.checked) params.set('rts', '1');
-  if (startAnywhereToggle.checked) params.set('sa', '1');
+  if (viaPoints.length > 0) {
+    params.set(
+      'via',
+      viaPoints.map((v) => `${v.lat.toFixed(5)},${v.lon.toFixed(5)},${v.km ?? ''}`).join(';'),
+    );
+  }
   history.replaceState(null, '', `#${params.toString()}`);
 }
 
@@ -1111,8 +1151,7 @@ function startSearch(): void {
     connectors: connectorsToggle.checked,
     beamWidth: Number(beamWidthInput.value) || 200,
     viaPoints,
-    viaToleranceKm:
-      Number((document.getElementById('via-tolerance') as HTMLInputElement).value) || 0.3,
+    viaToleranceKm: Number(viaToleranceInput.value) || 0.3,
   });
 }
 
@@ -1231,6 +1270,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       break;
     }
     case 'traces': {
+      savedTraces = msg.traces;
       renderTraces(msg.traces);
       // Downloading them is asking for them: the checkbox is only unticked by
       // default because there is nothing to use until one has been done.
@@ -1412,7 +1452,7 @@ downloadAreaButton.addEventListener('click', () => {
   send({ type: 'downloadArea', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
 });
 
-downloadTracesButton.addEventListener('click', () => {
+function startTracesDownload(): void {
   const start = map.getStart();
   if (!start) return;
   downloadingTraces = true;
@@ -1422,7 +1462,8 @@ downloadTracesButton.addEventListener('click', () => {
   // a download measured in minutes needs a way out.
   cancelButton.hidden = false;
   send({ type: 'downloadTraces', center: start, radiusMeters: Number(areaRadius.value) * 1000 });
-});
+}
+downloadTracesButton.addEventListener('click', startTracesDownload);
 
 /** The weight only counts while the box is ticked, so its controls grey with it. */
 function reflectUseTraces(): void {
@@ -1433,6 +1474,10 @@ reflectUseTraces();
 useTraces.addEventListener('change', () => {
   reflectUseTraces();
   persistSession();
+  if (useTraces.checked && !localStorage.getItem(TRACES_PROMPT_SKIP_KEY)) {
+    const start = map.getStart();
+    if (start ? !tracesCover(start) : savedTraces.length === 0) promptTracesDownload();
+  }
 });
 
 /**
@@ -1816,6 +1861,62 @@ function areaCovers(start: { lat: number; lon: number }): boolean {
   return savedAreas.some(
     (a) => haversineMeters(start.lat, start.lon, a.lat, a.lon) <= a.radiusMeters,
   );
+}
+
+/** "Don't show again" for the download-traces prompt — global, like the area's. */
+const TRACES_PROMPT_SKIP_KEY = 'profile-course.skipTracesPrompt';
+let savedTraces: import('./shared/messages').TraceInfo[] = [];
+
+function tracesCover(start: { lat: number; lon: number }): boolean {
+  return savedTraces.some(
+    (t) => haversineMeters(start.lat, start.lon, t.lat, t.lon) <= t.radiusMeters,
+  );
+}
+
+/**
+ * Ticking "unrun ground" without a trace download does nothing useful — every
+ * path counts as unrun — so the tick offers the download, like the Find button
+ * offers the path network. ✕/Esc just closes: the tick stays, the user may be
+ * about to download somewhere else.
+ */
+function promptTracesDownload(): void {
+  const start = map.getStart();
+  const wrap = document.createElement('div');
+  const info = document.createElement('p');
+  info.textContent =
+    'No downloaded GPS traces cover this start point, so every path here counts as ' +
+    'unrun and the weight has nothing to prefer. Download the traces around the start ' +
+    'once and the search can favour paths people actually run. The download takes ' +
+    'several minutes — the public API hands out 5 000 points at a time.';
+  const label = document.createElement('label');
+  label.className = 'control';
+  const span = document.createElement('span');
+  span.textContent = 'Radius (km)';
+  const select = areaRadius.cloneNode(true) as HTMLSelectElement;
+  select.removeAttribute('id');
+  select.value = areaRadius.value;
+  label.append(span, select);
+  const download = document.createElement('button');
+  download.textContent = start ? 'Download GPS traces' : 'Set a start point first';
+  download.disabled = !start || downloadingTraces;
+  download.style.marginTop = '10px';
+  const skip = document.createElement('button');
+  skip.textContent = "Don't show again";
+  skip.style.marginTop = '8px';
+  wrap.append(info, label, download, skip);
+
+  openDialog('Download GPS traces first?', wrap);
+
+  download.addEventListener('click', () => {
+    // The subsection's button carries the progress, so closing loses nothing.
+    areaRadius.value = select.value;
+    closeDialog();
+    startTracesDownload();
+  });
+  skip.addEventListener('click', () => {
+    localStorage.setItem(TRACES_PROMPT_SKIP_KEY, '1');
+    closeDialog();
+  });
 }
 
 /**
